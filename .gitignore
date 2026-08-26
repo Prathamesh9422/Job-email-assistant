@@ -1,0 +1,10 @@
+secret/
+queue.db
+tracker.xlsx
+state.json
+resumes/*
+!resumes/.gitkeep
+__pycache__/
+*.pyc
+.venv/
+venv/

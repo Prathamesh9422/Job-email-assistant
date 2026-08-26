@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Naukri Job Triage</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Naukri Job Triage</h1>
+  <div id="resume-indicator" class="resume-indicator">Resume: loading...</div>
+  <button id="refresh-btn">Refresh</button>
+</header>
+
+<h2 class="section-heading">Outreach candidates</h2>
+<table id="queue-table">
+  <thead>
+    <tr>
+      <th>Company</th>
+      <th>Role</th>
+      <th>HR Email</th>
+      <th>Source / Confidence</th>
+      <th>Template</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody id="queue-body"></tbody>
+</table>
+
+<h2 class="section-heading">Job digests &mdash; browse &amp; apply manually</h2>
+<p class="section-hint">These are multi-job or promotional Naukri emails with no single recruiter contact. Click a link to open the job on Naukri and apply yourself; Dismiss once handled.</p>
+<table id="digest-table">
+  <thead>
+    <tr>
+      <th>Subject</th>
+      <th>Received</th>
+      <th>Job links</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody id="digest-body"></tbody>
+</table>
+
+<div id="preview-modal" class="modal hidden">
+  <div class="modal-content">
+    <h2>Preview</h2>
+    <p><strong>Subject:</strong> <span id="preview-subject"></span></p>
+    <pre id="preview-body"></pre>
+    <button id="preview-close">Close</button>
+  </div>
+</div>
+
+<script src="/static/main.js"></script>
+</body>
+</html>

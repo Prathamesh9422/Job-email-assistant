@@ -1,0 +1,14 @@
+Subject: {{ role }} opportunity at {{ company }} (via Naukri)
+
+Hi{% if hr_name %} {{ hr_name }}{% endif %},
+
+[PLACEHOLDER: write your opening line here — e.g. "I came across the {{ role }} opening at {{ company }} on Naukri and wanted to reach out directly."]
+
+[PLACEHOLDER: a short paragraph on why you're a fit for this role.]
+
+I've attached my resume for your review{% if job_link %}. The original listing is here: {{ job_link }}{% endif %}.
+
+[PLACEHOLDER: closing line, e.g. "Happy to share more details or jump on a call at your convenience."]
+
+Best regards,
+{{ sender_name }}

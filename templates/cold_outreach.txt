@@ -1,0 +1,14 @@
+Subject: Interest in opportunities at {{ company }}
+
+Hi{% if hr_name %} {{ hr_name }}{% endif %},
+
+[PLACEHOLDER: write your opening line here — e.g. "I'm reaching out to express interest in opportunities at {{ company }}, particularly around {{ role }}."]
+
+[PLACEHOLDER: a short paragraph on your background and why you're interested in this company.]
+
+I've attached my resume for your review.
+
+[PLACEHOLDER: closing line, e.g. "I'd welcome the chance to discuss how I could contribute."]
+
+Best regards,
+{{ sender_name }}
