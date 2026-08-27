@@ -137,3 +137,38 @@ select {
   padding: 0.75rem;
   border-radius: 4px;
 }
+
+.modal-content label {
+  display: block;
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.85rem;
+}
+
+#preview-subject-input,
+#preview-body-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 0.9rem;
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+#preview-body-input {
+  resize: vertical;
+}
+
+.preview-status {
+  font-size: 0.8rem;
+  color: #1e7e34;
+  min-height: 1.2em;
+  margin-top: 0.4rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}

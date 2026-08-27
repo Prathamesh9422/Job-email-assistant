@@ -22,8 +22,11 @@ from config import (
     STATUS_SKIPPED,
     SOURCE_SCRAPED,
     TEMPLATE_COLD_OUTREACH,
+    TEMPLATE_COVER_LETTER,
     TEMPLATE_REPLY_TO_NAUKRI,
 )
+
+VALID_TEMPLATES = (TEMPLATE_REPLY_TO_NAUKRI, TEMPLATE_COLD_OUTREACH, TEMPLATE_COVER_LETTER)
 from templates_engine import render_template
 
 app = FastAPI()
@@ -37,13 +40,27 @@ def latest_resume() -> Optional[Path]:
     return max(pdfs, key=lambda p: p.stat().st_mtime)
 
 
+def _clean_company(row: dict) -> Optional[str]:
+    """The company/role fields sometimes both get filled from the same HTML fallback text
+    (e.g. a recruiter-broadcast email with no company disclosed) - drop company if it's
+    just a duplicate/superset of the role text rather than a real, distinct company name."""
+    company = row.get("company")
+    role = row.get("role")
+    if not company:
+        return None
+    if role and (company == role or role in company or company in role):
+        return None
+    return company
+
+
 def build_template_context(row: dict) -> dict:
+    company = _clean_company(row)
     return {
-        "company": row.get("company") or "the company",
+        "company": company or "the company",
         "role": row.get("role") or "the role",
         "hr_email": row.get("hr_email"),
-        "hr_name": None,
-        "sender_name": "Digvijay",
+        "hr_name": row.get("hr_name"),
+        "sender_name": "Prathamesh Patil",
         "job_link": row.get("job_link"),
     }
 
@@ -80,6 +97,7 @@ def api_get_queue_row(row_id: int):
 
 class PatchBody(BaseModel):
     hr_email: Optional[str] = None
+    hr_name: Optional[str] = None
     template_used: Optional[str] = None
 
 
@@ -93,6 +111,8 @@ def api_patch_queue_row(row_id: int, body: PatchBody):
         fields["hr_email"] = body.hr_email
         fields["hr_email_source"] = "manual"
         fields["status"] = STATUS_READY if body.hr_email else STATUS_NEEDS_INFO
+    if body.hr_name is not None:
+        fields["hr_name"] = body.hr_name
     if body.template_used is not None:
         fields["template_used"] = body.template_used
     db.update_queue_row(row_id, fields)
@@ -131,10 +151,34 @@ def api_preview(row_id: int, body: PreviewBody):
     row = db.get_queue_row(row_id)
     if not row:
         raise HTTPException(404, "not found")
-    if body.template not in (TEMPLATE_REPLY_TO_NAUKRI, TEMPLATE_COLD_OUTREACH):
+    if body.template not in VALID_TEMPLATES:
         raise HTTPException(400, "unknown template")
     context = build_template_context(row)
     return render_template(body.template, context)
+
+
+@app.get("/api/queue/{row_id}/final")
+def api_get_final(row_id: int):
+    row = db.get_queue_row(row_id)
+    if not row:
+        raise HTTPException(404, "not found")
+    if not row.get("final_body"):
+        return {"subject": None, "body": None}
+    return {"subject": row.get("final_subject"), "body": row.get("final_body")}
+
+
+class FinalizeBody(BaseModel):
+    subject: str
+    body: str
+
+
+@app.post("/api/queue/{row_id}/finalize")
+def api_finalize(row_id: int, body: FinalizeBody):
+    row = db.get_queue_row(row_id)
+    if not row:
+        raise HTTPException(404, "not found")
+    db.update_queue_row(row_id, {"final_subject": body.subject, "final_body": body.body})
+    return db.get_queue_row(row_id)
 
 
 @app.post("/api/queue/{row_id}/send")
@@ -147,8 +191,11 @@ def api_send(row_id: int):
     template_used = row.get("template_used") or TEMPLATE_REPLY_TO_NAUKRI
 
     resume = latest_resume()
-    context = build_template_context(row)
-    rendered = render_template(template_used, context)
+    if row.get("final_body"):
+        rendered = {"subject": row.get("final_subject") or "", "body": row["final_body"]}
+    else:
+        context = build_template_context(row)
+        rendered = render_template(template_used, context)
 
     try:
         if template_used == TEMPLATE_REPLY_TO_NAUKRI:

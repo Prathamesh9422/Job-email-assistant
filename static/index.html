@@ -18,6 +18,7 @@
     <tr>
       <th>Company</th>
       <th>Role</th>
+      <th>HR Name</th>
       <th>HR Email</th>
       <th>Source / Confidence</th>
       <th>Template</th>
@@ -44,10 +45,18 @@
 
 <div id="preview-modal" class="modal hidden">
   <div class="modal-content">
-    <h2>Preview</h2>
-    <p><strong>Subject:</strong> <span id="preview-subject"></span></p>
-    <pre id="preview-body"></pre>
-    <button id="preview-close">Close</button>
+    <h2>Preview &amp; finalize</h2>
+    <p class="section-hint">Edit freely below. Finalize saves this exact text as what gets sent for this candidate.</p>
+    <label for="preview-subject-input"><strong>Subject</strong></label>
+    <input type="text" id="preview-subject-input">
+    <label for="preview-body-input"><strong>Body</strong></label>
+    <textarea id="preview-body-input" rows="14"></textarea>
+    <div id="preview-status" class="preview-status"></div>
+    <div class="modal-actions">
+      <button id="preview-regenerate">Regenerate from template</button>
+      <button id="preview-finalize" class="primary">Finalize</button>
+      <button id="preview-close">Close</button>
+    </div>
   </div>
 </div>
 

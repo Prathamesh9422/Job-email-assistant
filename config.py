@@ -50,3 +50,4 @@ SOURCE_NONE = "none"
 
 TEMPLATE_REPLY_TO_NAUKRI = "reply_to_naukri"
 TEMPLATE_COLD_OUTREACH = "cold_outreach"
+TEMPLATE_COVER_LETTER = "cover_letter"

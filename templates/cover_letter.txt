@@ -1,0 +1,13 @@
+Subject: Application for {{ role }}{% if company %} at {{ company }}{% endif %}
+
+Hi{% if hr_name %} {{ hr_name }}{% endif %},
+
+I'm Prathamesh Patil. I'm a fresher and looking for an opportunity to start my career as a {{ role }}. I have knowledge of Core Java, OOP concepts, Spring Boot, REST API, SQL, and database connectivity. I have also worked on projects to improve my practical knowledge and understand how backend applications are developed.
+
+I'm a quick learner, interested in backend development, and ready to learn new technologies. I'm looking forward to joining a good team{% if company %} at {{ company }}{% endif %} where I can improve my skills and contribute.
+
+I've attached my resume for your reference{% if job_link %}. The original listing is here: {{ job_link }}{% endif %}.
+
+Regards,
+Prathamesh Patil
+Contact: 8329862318

@@ -46,6 +46,7 @@ NON_EMAIL_TLDS = {
 SUBJECT_JOB_PIPE_RE = re.compile(
     r"Job\s*\|\s*(.+?)(?:-CALL\s+\w+)?\s+in\s+([A-Za-z\s]+?)\s*$", re.IGNORECASE
 )
+SUBJECT_HR_NAME_RE = re.compile(r"-CALL\s+([A-Za-z]+)", re.IGNORECASE)
 SUBJECT_AT_COMPANY_RE = re.compile(r"\bat\s+([A-Z][\w&.,\-\s]{1,60}?)(?:[\.\!\?]|$)", re.IGNORECASE)
 SUBJECT_APPLICATION_ROLE_RE = re.compile(
     r"application for\s+(.+?)\s+at\s+", re.IGNORECASE
@@ -158,6 +159,15 @@ def is_digest(subject: str, job_links: list[str]) -> bool:
     return False
 
 
+def extract_hr_name(subject: str) -> Optional[str]:
+    """Naukri recruiter broadcasts sometimes include a contact name, e.g.
+    'Job | Business Associate-CALL KOMAL in Pune' -> 'Komal'."""
+    m = SUBJECT_HR_NAME_RE.search(subject)
+    if m:
+        return m.group(1).strip().title()
+    return None
+
+
 def extract_company_and_role(subject: str, html_body: str) -> tuple[Optional[str], Optional[str]]:
     company = None
     role = None
@@ -223,6 +233,7 @@ def parse_message(message: dict) -> dict:
 
     company, role = extract_company_and_role(subject, html_body)
     hr_email, hr_source, hr_confidence = extract_hr_email(message, text_body, html_body)
+    hr_name = extract_hr_name(subject)
 
     status = STATUS_READY if hr_email else STATUS_NEEDS_INFO
 
@@ -236,6 +247,7 @@ def parse_message(message: dict) -> dict:
         "job_link": job_links[0] if job_links else None,
         "digest_job_links": [],
         "hr_email": hr_email,
+        "hr_name": hr_name,
         "hr_email_source": hr_source,
         "hr_email_confidence": hr_confidence,
         "status": status,

@@ -18,9 +18,12 @@ CREATE TABLE IF NOT EXISTS queue (
     job_link            TEXT,
     digest_job_links    TEXT,
     hr_email            TEXT,
+    hr_name             TEXT,
     hr_email_source     TEXT NOT NULL DEFAULT 'none',
     hr_email_confidence TEXT NOT NULL DEFAULT 'low',
     template_used       TEXT,
+    final_subject       TEXT,
+    final_body          TEXT,
     status              TEXT NOT NULL DEFAULT 'needs_info',
     error_message       TEXT,
     resume_filename     TEXT,
@@ -59,6 +62,12 @@ def init_db() -> None:
         existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(queue)")}
         if "digest_job_links" not in existing_cols:
             conn.execute("ALTER TABLE queue ADD COLUMN digest_job_links TEXT")
+        if "final_subject" not in existing_cols:
+            conn.execute("ALTER TABLE queue ADD COLUMN final_subject TEXT")
+        if "final_body" not in existing_cols:
+            conn.execute("ALTER TABLE queue ADD COLUMN final_body TEXT")
+        if "hr_name" not in existing_cols:
+            conn.execute("ALTER TABLE queue ADD COLUMN hr_name TEXT")
 
 
 def insert_queue_row(conn: sqlite3.Connection, row: dict) -> Optional[int]:
@@ -67,9 +76,9 @@ def insert_queue_row(conn: sqlite3.Connection, row: dict) -> Optional[int]:
         """
         INSERT OR IGNORE INTO queue (
             gmail_message_id, gmail_thread_id, received_at, subject,
-            company, role, job_link, digest_job_links, hr_email, hr_email_source,
+            company, role, job_link, digest_job_links, hr_email, hr_name, hr_email_source,
             hr_email_confidence, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             row["gmail_message_id"],
@@ -81,6 +90,7 @@ def insert_queue_row(conn: sqlite3.Connection, row: dict) -> Optional[int]:
             row.get("job_link"),
             json.dumps(row.get("digest_job_links", [])),
             row.get("hr_email"),
+            row.get("hr_name"),
             row.get("hr_email_source", SOURCE_NONE),
             row.get("hr_email_confidence", "low"),
             row.get("status", STATUS_NEEDS_INFO),

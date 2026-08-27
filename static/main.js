@@ -3,10 +3,18 @@ const digestBody = document.getElementById("digest-body");
 const resumeIndicator = document.getElementById("resume-indicator");
 const refreshBtn = document.getElementById("refresh-btn");
 const previewModal = document.getElementById("preview-modal");
-const previewSubject = document.getElementById("preview-subject");
-const previewBody = document.getElementById("preview-body");
+const previewSubjectInput = document.getElementById("preview-subject-input");
+const previewBodyInput = document.getElementById("preview-body-input");
+const previewStatus = document.getElementById("preview-status");
+let currentPreview = { id: null, template: null };
+
 document.getElementById("preview-close").addEventListener("click", () => {
   previewModal.classList.add("hidden");
+});
+document.getElementById("preview-finalize").addEventListener("click", finalizeCurrentPreview);
+document.getElementById("preview-regenerate").addEventListener("click", () => {
+  if (!confirm("Discard current edits and regenerate from the template?")) return;
+  renderFromTemplate(currentPreview.id, currentPreview.template);
 });
 
 async function loadResume() {
@@ -79,7 +87,7 @@ async function dismissDigest(id) {
 function renderRows(rows) {
   tbody.innerHTML = "";
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7">No candidates right now.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8">No candidates right now.</td></tr>`;
     return;
   }
   for (const row of rows) {
@@ -97,6 +105,14 @@ function renderRow(row) {
   const tdRole = document.createElement("td");
   tdRole.textContent = row.role || "(unknown)";
 
+  const tdHrName = document.createElement("td");
+  const hrNameInput = document.createElement("input");
+  hrNameInput.type = "text";
+  hrNameInput.value = row.hr_name || "";
+  hrNameInput.placeholder = "(optional)";
+  hrNameInput.addEventListener("change", () => patchRow(row.id, { hr_name: hrNameInput.value }));
+  tdHrName.appendChild(hrNameInput);
+
   const tdHr = document.createElement("td");
   const hrInput = document.createElement("input");
   hrInput.type = "text";
@@ -113,6 +129,7 @@ function renderRow(row) {
   for (const [value, label] of [
     ["reply_to_naukri", "Reply to Naukri"],
     ["cold_outreach", "Cold outreach"],
+    ["cover_letter", "Cover letter"],
   ]) {
     const opt = document.createElement("option");
     opt.value = value;
@@ -160,7 +177,7 @@ function renderRow(row) {
   skipBtn.addEventListener("click", () => skipRow(row.id));
   tdActions.appendChild(skipBtn);
 
-  tr.append(tdCompany, tdRole, tdHr, tdSource, tdTemplate, tdStatus, tdActions);
+  tr.append(tdCompany, tdRole, tdHrName, tdHr, tdSource, tdTemplate, tdStatus, tdActions);
   return tr;
 }
 
@@ -189,6 +206,23 @@ async function scrapeRow(id) {
 }
 
 async function previewRow(id, template) {
+  currentPreview = { id, template };
+  previewStatus.textContent = "";
+  previewModal.classList.remove("hidden");
+
+  const finalRes = await fetch(`/api/queue/${id}/final`);
+  const finalData = await finalRes.json();
+  if (finalData.body) {
+    previewSubjectInput.value = finalData.subject || "";
+    previewBodyInput.value = finalData.body;
+    previewStatus.textContent = "Showing your previously finalized version.";
+    return;
+  }
+
+  await renderFromTemplate(id, template);
+}
+
+async function renderFromTemplate(id, template) {
   const res = await fetch(`/api/queue/${id}/preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -199,9 +233,27 @@ async function previewRow(id, template) {
     alert(data.detail || "Preview failed");
     return;
   }
-  previewSubject.textContent = data.subject;
-  previewBody.textContent = data.body;
-  previewModal.classList.remove("hidden");
+  previewSubjectInput.value = data.subject;
+  previewBodyInput.value = data.body;
+  previewStatus.textContent = "";
+}
+
+async function finalizeCurrentPreview() {
+  if (!currentPreview.id) return;
+  const res = await fetch(`/api/queue/${currentPreview.id}/finalize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      subject: previewSubjectInput.value,
+      body: previewBodyInput.value,
+    }),
+  });
+  if (!res.ok) {
+    const data = await res.json();
+    alert(data.detail || "Finalize failed");
+    return;
+  }
+  previewStatus.textContent = "Finalized — this exact text will be used when you Approve & Send.";
 }
 
 async function sendRow(id) {
