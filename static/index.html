@@ -2,62 +2,87 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Naukri Job Triage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header>
-  <h1>Naukri Job Triage</h1>
-  <div id="resume-indicator" class="resume-indicator">Resume: loading...</div>
-  <div id="scheduler-status" class="resume-indicator">Scheduler: loading...</div>
-  <button id="run-now-btn">Run Email Check Now</button>
-  <button id="refresh-btn">Refresh</button>
-</header>
+<div class="shell">
 
-<h2 class="section-heading">Outreach candidates</h2>
-<table id="queue-table">
-  <thead>
-    <tr>
-      <th>Received</th>
-      <th>Company</th>
-      <th>Role</th>
-      <th>HR Email</th>
-      <th>Source / Confidence</th>
-      <th>Template</th>
-      <th>Status</th>
-      <th>Actions</th>
-    </tr>
-  </thead>
-  <tbody id="queue-body"></tbody>
-</table>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Naukri Job Triage</h1>
+      <span class="brand-tag">manual approval only</span>
+    </div>
+    <div class="chip" id="resume-indicator">Resume: loading...</div>
+    <div class="chip" id="scheduler-status">Scheduler: loading...</div>
+    <button id="run-now-btn" class="btn">Run Email Check Now</button>
+    <button id="refresh-btn" class="btn btn-ghost">Refresh</button>
+  </header>
 
-<h2 class="section-heading">Job digests &mdash; browse &amp; apply manually</h2>
-<p class="section-hint">These are multi-job or promotional Naukri emails with no single recruiter contact. Click a link to open the job on Naukri and apply yourself; Dismiss once handled.</p>
-<table id="digest-table">
-  <thead>
-    <tr>
-      <th>Subject</th>
-      <th>Received</th>
-      <th>Job links</th>
-      <th>Actions</th>
-    </tr>
-  </thead>
-  <tbody id="digest-body"></tbody>
-</table>
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Outreach candidates</h2>
+      <p>Nothing here sends until you click Approve &amp; Send.</p>
+    </div>
+    <div class="table-scroll">
+      <table id="queue-table">
+        <thead>
+          <tr>
+            <th>Received</th>
+            <th>Company</th>
+            <th>Role</th>
+            <th>HR Email</th>
+            <th>Source / Confidence</th>
+            <th>Template</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="queue-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Job digests</h2>
+      <p>Multi-job or promotional emails with no single recruiter contact &mdash; click a link to open the job on Naukri and apply yourself, then Dismiss.</p>
+    </div>
+    <div class="table-scroll">
+      <table id="digest-table">
+        <thead>
+          <tr>
+            <th>Subject</th>
+            <th>Received</th>
+            <th>Job links</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="digest-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="safety-note">Sending is always a manual, per-email decision &mdash; nothing is ever sent automatically.</footer>
+</div>
 
 <div id="preview-modal" class="modal hidden">
   <div class="modal-content">
     <h2>Preview &amp; finalize</h2>
     <p class="section-hint">Edit freely below. Finalize saves this exact text as what gets sent for this candidate.</p>
-    <label for="preview-subject-input"><strong>Subject</strong></label>
+    <label for="preview-subject-input">Subject</label>
     <input type="text" id="preview-subject-input">
-    <label for="preview-body-input"><strong>Body</strong></label>
+    <label for="preview-body-input">Body</label>
     <textarea id="preview-body-input" rows="14"></textarea>
     <div id="preview-status" class="preview-status"></div>
     <div class="modal-actions">
-      <button id="preview-regenerate">Regenerate from template</button>
-      <button id="preview-finalize" class="primary">Finalize</button>
-      <button id="preview-close">Close</button>
+      <button id="preview-regenerate" class="btn btn-ghost">Regenerate from template</button>
+      <button id="preview-finalize" class="btn primary">Finalize</button>
+      <button id="preview-close" class="btn btn-ghost">Close</button>
     </div>
   </div>
 </div>

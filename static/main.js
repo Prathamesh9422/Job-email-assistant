@@ -91,12 +91,15 @@ function renderDigests(rows) {
     const tr = document.createElement("tr");
 
     const tdSubject = document.createElement("td");
+    tdSubject.dataset.label = "Subject";
     tdSubject.textContent = row.subject || "(no subject)";
 
     const tdReceived = document.createElement("td");
+    tdReceived.dataset.label = "Received";
     tdReceived.textContent = row.received_at ? new Date(row.received_at).toLocaleString() : "";
 
     const tdLinks = document.createElement("td");
+    tdLinks.dataset.label = "Job links";
     const links = row.digest_job_links || [];
     if (links.length === 0) {
       tdLinks.textContent = "(no job links found)";
@@ -113,6 +116,7 @@ function renderDigests(rows) {
     }
 
     const tdActions = document.createElement("td");
+    tdActions.dataset.label = "Actions";
     const dismissBtn = document.createElement("button");
     dismissBtn.textContent = "Dismiss";
     dismissBtn.addEventListener("click", () => dismissDigest(row.id));
@@ -144,15 +148,19 @@ function renderRow(row) {
   tr.dataset.id = row.id;
 
   const tdReceived = document.createElement("td");
+  tdReceived.dataset.label = "Received";
   tdReceived.textContent = row.received_at ? new Date(row.received_at).toLocaleString() : "";
 
   const tdCompany = document.createElement("td");
+  tdCompany.dataset.label = "Company";
   tdCompany.textContent = row.company || "(unknown)";
 
   const tdRole = document.createElement("td");
+  tdRole.dataset.label = "Role";
   tdRole.textContent = row.role || "(unknown)";
 
   const tdHr = document.createElement("td");
+  tdHr.dataset.label = "HR Email";
   const hrInput = document.createElement("input");
   hrInput.type = "text";
   hrInput.value = row.hr_email || "";
@@ -161,9 +169,11 @@ function renderRow(row) {
   tdHr.appendChild(hrInput);
 
   const tdSource = document.createElement("td");
+  tdSource.dataset.label = "Source / Confidence";
   tdSource.textContent = `${row.hr_email_source} / ${row.hr_email_confidence}`;
 
   const tdTemplate = document.createElement("td");
+  tdTemplate.dataset.label = "Template";
   const select = document.createElement("select");
   for (const [value, label] of [
     ["reply_to_naukri", "Reply to Naukri"],
@@ -180,19 +190,21 @@ function renderRow(row) {
   tdTemplate.appendChild(select);
 
   const tdStatus = document.createElement("td");
+  tdStatus.dataset.label = "Status";
   const pill = document.createElement("span");
   pill.className = `status-pill status-${row.status}`;
   pill.textContent = row.status;
   tdStatus.appendChild(pill);
   if (row.error_message) {
     const err = document.createElement("div");
-    err.style.color = "#a02622";
+    err.style.color = "#DC2626";
     err.style.fontSize = "0.75rem";
     err.textContent = row.error_message;
     tdStatus.appendChild(err);
   }
 
   const tdActions = document.createElement("td");
+  tdActions.dataset.label = "Actions";
   tdActions.className = "actions";
 
   const scrapeBtn = document.createElement("button");
