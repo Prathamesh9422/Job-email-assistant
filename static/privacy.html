@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naukri Job Triage Privacy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F5F6F3; --surface: #FFFFFF; --ink: #1B1F1D; --muted: #5B615C;
+    --border: #DDE1DB; --accent: #2F5D50; --accent-soft: #E4EEEA;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171A; --surface: #1B1F1D; --ink: #E9ECE9; --muted: #9AA19B;
+      --border: #2B302C; --accent: #6FBFA6; --accent-soft: #223029;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171A; --surface: #1B1F1D; --ink: #E9ECE9; --muted: #9AA19B;
+    --border: #2B302C; --accent: #6FBFA6; --accent-soft: #223029;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "Work Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 1.0625rem; line-height: 1.7; margin: 0; padding: 4.5rem 1.5rem 6rem;
+  }
+  main { max-width: 680px; margin: 0 auto; }
+  .eyebrow { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 0 0 0.9rem; }
+  h1 { font-family: "Fraunces", Georgia, serif; font-weight: 500; font-size: clamp(2rem, 5vw, 2.5rem); line-height: 1.1; letter-spacing: -0.01em; margin: 0 0 0.6rem; text-wrap: balance; }
+  .updated { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); margin: 0 0 3rem; }
+  h2 { font-family: "Fraunces", Georgia, serif; font-weight: 500; font-size: 1.3rem; margin: 0 0 1rem; }
+  section + section { margin-top: 2.5rem; padding-top: 2.5rem; border-top: 1px solid var(--border); }
+  p { margin: 0 0 1rem; max-width: 62ch; }
+  p:last-child { margin-bottom: 0; }
+  ul { margin: 0 0 1rem; padding-left: 1.2rem; }
+  ul:last-child { margin-bottom: 0; }
+  li { margin-bottom: 0.5rem; }
+  li:last-child { margin-bottom: 0; }
+  .scope-table { display: grid; grid-template-columns: auto 1fr; gap: 0.6rem 1.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1.1rem 1.25rem; }
+  .scope-table code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.82rem; color: var(--accent); white-space: nowrap; }
+  .scope-table span { color: var(--muted); font-size: 0.95rem; }
+  footer { margin-top: 3.5rem; padding-top: 1.75rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
+  a { color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Privacy policy</p>
+  <h1>Naukri Job Triage</h1>
+  <p class="updated">Last updated August 2026</p>
+
+  <section>
+    <h2>What this is</h2>
+    <p>Naukri Job Triage is a personal tool built and used by a single individual, Prathamesh Patil, to help manage job-search outreach. It is not a public product, is not distributed to other users, and does not collect data from anyone other than its one owner.</p>
+  </section>
+
+  <section>
+    <h2>What it accesses, and why</h2>
+    <div class="scope-table">
+      <code>gmail.readonly</code>
+      <span>Search and read emails sent from naukri.com, to find job alerts and extract role, company, and recruiter details.</span>
+      <code>gmail.send</code>
+      <span>Send an outreach email &mdash; but only at the exact moment the owner clicks "Approve &amp; Send" on a specific, previously reviewed draft. Nothing is ever sent automatically.</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>What is stored</h2>
+    <p>The tool keeps a private database of parsed job details (subject line, company, role, recruiter name/email, a link to the job posting) and a record of what was sent, skipped, or failed. It does not store full email bodies beyond what is needed to draft and thread a reply.</p>
+    <p>This data lives in a private database operated by the owner and is not accessible to anyone else.</p>
+  </section>
+
+  <section>
+    <h2>What is never done</h2>
+    <ul>
+      <li>Data is not sold, shared, or shown to any third party.</li>
+      <li>No advertising or analytics tracking is attached to this data.</li>
+      <li>No email is ever sent without a manual, per-message approval from the owner.</li>
+      <li>Access is not used for anything beyond the owner's own job search.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Retention and deletion</h2>
+    <p>Data is retained until the owner deletes it. Revoking this app's access from your Google Account settings stops all further access immediately.</p>
+  </section>
+
+  <section>
+    <h2>Contact</h2>
+    <p>Questions about this policy or this tool can be sent to <a href="mailto:pprathamesh2412@gmail.com">pprathamesh2412@gmail.com</a>.</p>
+  </section>
+
+  <footer>
+    <a href="/home">&larr; Back to the app overview</a>
+  </footer>
+</main>
+</body>
+</html>

@@ -81,6 +81,20 @@ def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/home")
+def home_page():
+    """Public, static, no-auth page describing the app - used as the OAuth
+    consent screen's 'Application home page'. Serves no Gmail or queue data."""
+    return FileResponse(STATIC_DIR / "home.html")
+
+
+@app.get("/privacy")
+def privacy_page():
+    """Public, static, no-auth privacy policy - used as the OAuth consent
+    screen's 'Application privacy policy link'. Serves no Gmail or queue data."""
+    return FileResponse(STATIC_DIR / "privacy.html")
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}
