@@ -8,3 +8,5 @@ beautifulsoup4
 openpyxl
 jinja2
 python-dateutil
+sqlalchemy
+psycopg2-binary

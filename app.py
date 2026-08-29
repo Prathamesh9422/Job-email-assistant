@@ -1,5 +1,6 @@
 """FastAPI backend + UI server. This is the ONLY place emails are ever sent —
 always via an explicit user action (Approve & Send button)."""
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -10,11 +11,13 @@ from pydantic import BaseModel
 
 import db
 import excel_tracker
+import fetch_job
 import gmail_client
 import scraper
 from config import (
     RESUMES_DIR,
     STATIC_DIR,
+    TRACKER_FILE,
     STATUS_FAILED,
     STATUS_NEEDS_INFO,
     STATUS_READY,
@@ -29,7 +32,15 @@ from config import (
 VALID_TEMPLATES = (TEMPLATE_REPLY_TO_NAUKRI, TEMPLATE_COLD_OUTREACH, TEMPLATE_COVER_LETTER)
 from templates_engine import render_template
 
+# The daily fetch job's cron schedule, so the dashboard can show when the next
+# run is expected. Keep in sync with the Railway Cron Job's schedule (30 14 * * * UTC).
+NEXT_RUN_HOUR_UTC = 14
+NEXT_RUN_MINUTE_UTC = 30
+
 app = FastAPI()
+
+RESUMES_DIR.mkdir(parents=True, exist_ok=True)
+TRACKER_FILE.parent.mkdir(parents=True, exist_ok=True)
 db.init_db()
 
 
@@ -73,6 +84,35 @@ def index():
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+def _next_expected_run_utc() -> str:
+    now = datetime.now(timezone.utc)
+    target = now.replace(hour=NEXT_RUN_HOUR_UTC, minute=NEXT_RUN_MINUTE_UTC, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target.isoformat()
+
+
+@app.get("/api/scheduler/status")
+def scheduler_status():
+    latest = db.get_latest_run()
+    return {
+        "last_run_at": latest.get("run_started_at") if latest else None,
+        "last_run_finished_at": latest.get("run_finished_at") if latest else None,
+        "last_run_status": latest.get("status") if latest else None,
+        "last_run_error": latest.get("error_message") if latest else None,
+        "messages_found": latest.get("messages_found") if latest else None,
+        "processed_count": latest.get("rows_inserted") if latest else None,
+        "next_expected_run_utc": _next_expected_run_utc(),
+    }
+
+
+@app.post("/api/scheduler/run-now")
+def scheduler_run_now():
+    """Manual trigger for testing - runs the exact same triage logic as the
+    scheduled cron job. Never sends email (fetch_job.run_fetch has no send code path)."""
+    return fetch_job.run_fetch()
 
 
 @app.get("/api/resume")

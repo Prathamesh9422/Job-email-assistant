@@ -1,5 +1,8 @@
 # Setup
 
+This covers **local development** (Windows, SQLite, Task Scheduler). For running in
+production on Railway (Postgres, Railway Cron), see [PRODUCTION.md](PRODUCTION.md).
+
 ## 1. Install dependencies
 
 ```bash
@@ -38,7 +41,10 @@ uvicorn app:app --host 127.0.0.1 --port 8000
 
 Open http://127.0.0.1:8000 in a browser. Review each row, edit the HR email if needed, pick a template, preview it, and click **Approve & Send** when ready.
 
-## 6. Schedule the daily fetch (Windows Task Scheduler)
+## 6. Schedule the daily fetch locally (optional — Windows Task Scheduler)
+
+This is a local-dev convenience only. In production, Railway Cron is the scheduler
+(see PRODUCTION.md) — you don't need this if you're only using the deployed app.
 
 1. Open Task Scheduler > **Create Basic Task**.
 2. Name: `Naukri Job Triage Fetch`. Trigger: **Daily**, pick a time (e.g. 8:00 AM).

@@ -2,9 +2,11 @@ secret/
 queue.db
 tracker.xlsx
 state.json
+fetch_log.txt
 resumes/*
 !resumes/.gitkeep
 __pycache__/
 *.pyc
 .venv/
 venv/
+.env

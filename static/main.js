@@ -1,6 +1,8 @@
 const tbody = document.getElementById("queue-body");
 const digestBody = document.getElementById("digest-body");
 const resumeIndicator = document.getElementById("resume-indicator");
+const schedulerStatus = document.getElementById("scheduler-status");
+const runNowBtn = document.getElementById("run-now-btn");
 const refreshBtn = document.getElementById("refresh-btn");
 const previewModal = document.getElementById("preview-modal");
 const previewSubjectInput = document.getElementById("preview-subject-input");
@@ -30,6 +32,48 @@ async function loadQueue() {
   const rows = await res.json();
   renderRows(rows);
 }
+
+async function loadSchedulerStatus() {
+  const res = await fetch("/api/scheduler/status");
+  const data = await res.json();
+  if (!data.last_run_at) {
+    schedulerStatus.textContent = "Scheduler: no runs yet";
+    return;
+  }
+  const when = new Date(data.last_run_at).toLocaleString();
+  const parts = [`Last run: ${when} (${data.last_run_status})`];
+  if (data.last_run_status === "success") {
+    parts.push(`${data.processed_count ?? 0} added / ${data.messages_found ?? 0} found`);
+  } else if (data.last_run_error) {
+    parts.push(`error: ${data.last_run_error}`);
+  }
+  schedulerStatus.textContent = parts.join(" — ");
+  schedulerStatus.title = `Next expected run: ${new Date(data.next_expected_run_utc).toLocaleString()}`;
+}
+
+async function runEmailCheckNow() {
+  runNowBtn.disabled = true;
+  runNowBtn.textContent = "Running...";
+  try {
+    const res = await fetch("/api/scheduler/run-now", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok || data.status === "failed") {
+      alert(`Run failed: ${data.error || "unknown error"}`);
+    } else {
+      alert(`Done — found ${data.messages_found}, added ${data.rows_inserted} new candidate(s).`);
+    }
+  } catch (e) {
+    alert(`Run failed: ${e}`);
+  } finally {
+    runNowBtn.disabled = false;
+    runNowBtn.textContent = "Run Email Check Now";
+    loadSchedulerStatus();
+    loadQueue();
+    loadDigests();
+  }
+}
+
+runNowBtn.addEventListener("click", runEmailCheckNow);
 
 async function loadDigests() {
   const res = await fetch("/api/queue?status=digest");
@@ -99,19 +143,14 @@ function renderRow(row) {
   const tr = document.createElement("tr");
   tr.dataset.id = row.id;
 
+  const tdReceived = document.createElement("td");
+  tdReceived.textContent = row.received_at ? new Date(row.received_at).toLocaleString() : "";
+
   const tdCompany = document.createElement("td");
   tdCompany.textContent = row.company || "(unknown)";
 
   const tdRole = document.createElement("td");
   tdRole.textContent = row.role || "(unknown)";
-
-  const tdHrName = document.createElement("td");
-  const hrNameInput = document.createElement("input");
-  hrNameInput.type = "text";
-  hrNameInput.value = row.hr_name || "";
-  hrNameInput.placeholder = "(optional)";
-  hrNameInput.addEventListener("change", () => patchRow(row.id, { hr_name: hrNameInput.value }));
-  tdHrName.appendChild(hrNameInput);
 
   const tdHr = document.createElement("td");
   const hrInput = document.createElement("input");
@@ -177,7 +216,7 @@ function renderRow(row) {
   skipBtn.addEventListener("click", () => skipRow(row.id));
   tdActions.appendChild(skipBtn);
 
-  tr.append(tdCompany, tdRole, tdHrName, tdHr, tdSource, tdTemplate, tdStatus, tdActions);
+  tr.append(tdReceived, tdCompany, tdRole, tdHr, tdSource, tdTemplate, tdStatus, tdActions);
   return tr;
 }
 
@@ -277,8 +316,10 @@ async function skipRow(id) {
 refreshBtn.addEventListener("click", () => {
   loadQueue();
   loadDigests();
+  loadSchedulerStatus();
 });
 
 loadResume();
 loadQueue();
 loadDigests();
+loadSchedulerStatus();

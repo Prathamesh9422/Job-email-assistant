@@ -2,6 +2,7 @@
 import base64
 import email
 import mimetypes
+import os
 from email.header import Header
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
@@ -16,8 +17,37 @@ from googleapiclient.discovery import build
 
 from config import CLIENT_SECRET_FILE, SCOPES, TOKEN_FILE
 
+TOKEN_URI = "https://oauth2.googleapis.com/token"
+
+
+def _credentials_from_env() -> Optional[Credentials]:
+    """Production path (Railway): build credentials directly from env vars, no
+    files, no browser. Used whenever GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN are set."""
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    refresh_token = os.environ.get("GOOGLE_REFRESH_TOKEN")
+    if not (client_id and client_secret and refresh_token):
+        return None
+
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri=TOKEN_URI,
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=SCOPES,
+    )
+    creds.refresh(Request())
+    return creds
+
 
 def get_credentials() -> Credentials:
+    env_creds = _credentials_from_env()
+    if env_creds is not None:
+        return env_creds
+
+    # Local dev path (unchanged): file-based token cache + one-time interactive
+    # browser consent. Never runs in production - the env vars above take over.
     creds: Optional[Credentials] = None
     if TOKEN_FILE.exists():
         creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)

@@ -1,65 +1,87 @@
-"""Daily entrypoint (run via Windows Task Scheduler): delta-fetch Naukri emails,
-parse them, and populate the review queue. Never sends anything.
+"""Delta-fetch Naukri emails, parse them, and populate the review queue.
+Never sends anything - this is enforced structurally: there is no code path
+here that calls gmail_client.send_new/send_threaded_reply.
+
+Callable two ways:
+  - CLI (Windows Task Scheduler locally, or `python fetch_job.py` as the
+    Railway Cron Job's start command in production)
+  - In-process, via run_fetch(), from the dashboard's "Run Email Check Now"
+    button (app.py) - same logic, same safety guarantees, on demand.
 """
-import json
 import sys
 from datetime import datetime, timedelta, timezone
 
 import db
 import gmail_client
-from config import DEFAULT_LOOKBACK_DAYS, NAUKRI_SENDER_QUERY, STATE_FILE
+from config import DEFAULT_LOOKBACK_DAYS, NAUKRI_SENDER_QUERY
 from naukri_parser import parse_message
 
 
-def load_last_checked() -> datetime | None:
-    if not STATE_FILE.exists():
-        return None
-    try:
-        data = json.loads(STATE_FILE.read_text())
-        return datetime.fromisoformat(data["last_checked_date"])
-    except Exception:
-        return None
-
-
-def save_last_checked(dt: datetime) -> None:
-    STATE_FILE.write_text(json.dumps({"last_checked_date": dt.isoformat()}))
-
-
-def build_query(last_checked: datetime | None) -> str:
-    after = last_checked or (datetime.now(timezone.utc) - timedelta(days=DEFAULT_LOOKBACK_DAYS))
+def build_query(last_checked_iso: str | None) -> str:
+    if last_checked_iso:
+        after = datetime.fromisoformat(last_checked_iso)
+    else:
+        after = datetime.now(timezone.utc) - timedelta(days=DEFAULT_LOOKBACK_DAYS)
     return f"{NAUKRI_SENDER_QUERY} after:{int(after.timestamp())}"
 
 
-def main() -> int:
-    run_start = datetime.now(timezone.utc)
+def run_fetch() -> dict:
+    """Runs one fetch cycle and returns a summary dict. Records the run in the
+    scheduler_state table regardless of outcome, so failures are visible in the
+    dashboard instead of silently disappearing into a log."""
     db.init_db()
+    run_start = datetime.now(timezone.utc)
+    run_id = db.start_run()
 
-    last_checked = load_last_checked()
+    last_checked = db.get_last_checked()
     query = build_query(last_checked)
     print(f"[fetch_job] query: {query}")
 
     try:
         message_ids = gmail_client.search_messages(query)
-    except FileNotFoundError as e:
-        print(f"[fetch_job] {e}")
-        return 1
+    except Exception as e:
+        db.finish_run(run_id, status="failed", error_message=str(e))
+        print(f"[fetch_job] search failed: {e}")
+        return {"status": "failed", "error": str(e)}
 
     print(f"[fetch_job] found {len(message_ids)} candidate message(s)")
 
     inserted = 0
-    with db.get_conn() as conn:
-        for msg_id in message_ids:
-            message = gmail_client.get_message(msg_id)
-            parsed = parse_message(message)
-            row_id = db.insert_queue_row(conn, parsed)
-            if row_id:
-                inserted += 1
+    try:
+        with db.get_conn() as conn:
+            for msg_id in message_ids:
+                message = gmail_client.get_message(msg_id)
+                parsed = parse_message(message)
+                row_id = db.insert_queue_row(conn, parsed)
+                if row_id:
+                    inserted += 1
+    except Exception as e:
+        db.finish_run(
+            run_id,
+            status="failed",
+            error_message=str(e),
+            messages_found=len(message_ids),
+            rows_inserted=inserted,
+        )
+        print(f"[fetch_job] processing failed: {e}")
+        return {"status": "failed", "error": str(e)}
 
     print(f"[fetch_job] inserted {inserted} new row(s)")
 
-    save_last_checked(run_start)
+    db.finish_run(
+        run_id,
+        status="success",
+        messages_found=len(message_ids),
+        rows_inserted=inserted,
+        last_checked_date=run_start.isoformat(),
+    )
     print(f"[fetch_job] last_checked_date updated to {run_start.isoformat()}")
-    return 0
+    return {"status": "success", "messages_found": len(message_ids), "rows_inserted": inserted}
+
+
+def main() -> int:
+    result = run_fetch()
+    return 0 if result["status"] == "success" else 1
 
 
 if __name__ == "__main__":

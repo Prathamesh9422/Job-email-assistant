@@ -9,6 +9,8 @@
 <header>
   <h1>Naukri Job Triage</h1>
   <div id="resume-indicator" class="resume-indicator">Resume: loading...</div>
+  <div id="scheduler-status" class="resume-indicator">Scheduler: loading...</div>
+  <button id="run-now-btn">Run Email Check Now</button>
   <button id="refresh-btn">Refresh</button>
 </header>
 
@@ -16,9 +18,9 @@
 <table id="queue-table">
   <thead>
     <tr>
+      <th>Received</th>
       <th>Company</th>
       <th>Role</th>
-      <th>HR Name</th>
       <th>HR Email</th>
       <th>Source / Confidence</th>
       <th>Template</th>
