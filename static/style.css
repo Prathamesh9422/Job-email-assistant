@@ -176,6 +176,25 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   font-size: 0.85rem;
 }
 
+.token-display {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.token-display input {
+  flex: 1;
+  min-width: 260px;
+  font-family: monospace;
+  padding: 0.4rem 0.6rem;
+}
+
+.token-display .section-hint {
+  flex-basis: 100%;
+}
+
 /* Tables */
 
 .table-scroll {

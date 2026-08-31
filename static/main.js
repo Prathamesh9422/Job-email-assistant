@@ -474,6 +474,29 @@ signoutBtn.addEventListener("click", async () => {
   window.location.reload();
 });
 
+const generateTokenBtn = document.getElementById("generate-token-btn");
+const tokenDisplay = document.getElementById("token-display");
+const tokenValueInput = document.getElementById("token-value");
+const copyTokenBtn = document.getElementById("copy-token-btn");
+
+generateTokenBtn.addEventListener("click", async () => {
+  if (
+    tokenDisplay.classList.contains("hidden") ||
+    confirm("Regenerating replaces your current token - the old one stops working immediately. Continue?")
+  ) {
+    const res = await fetch("/api/settings/api-token", { method: "POST" });
+    const data = await res.json();
+    tokenValueInput.value = data.token;
+    tokenDisplay.classList.remove("hidden");
+  }
+});
+
+copyTokenBtn.addEventListener("click", async () => {
+  await navigator.clipboard.writeText(tokenValueInput.value);
+  copyTokenBtn.textContent = "Copied!";
+  setTimeout(() => (copyTokenBtn.textContent = "Copy"), 1500);
+});
+
 async function checkAuthAndInit() {
   const res = await fetch("/api/me");
   if (res.status === 401) {

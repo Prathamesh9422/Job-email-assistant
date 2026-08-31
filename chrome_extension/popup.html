@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Naukri Applied-Jobs Sync</title>
+<style>
+  body { font-family: system-ui, sans-serif; width: 320px; padding: 14px; color: #1a1a1a; }
+  h1 { font-size: 15px; margin: 0 0 10px; }
+  #not-configured { display: none; }
+  #not-configured p { font-size: 13px; color: #444; }
+  #main { display: none; }
+  #wrong-page { display: none; font-size: 13px; color: #444; }
+  button { width: 100%; padding: 8px; font-size: 13px; cursor: pointer; margin-top: 6px; }
+  #status { margin-top: 10px; font-size: 12px; white-space: pre-wrap; }
+  #status.error { color: #b00020; }
+  #status.success { color: #146c2e; }
+  .errors { margin-top: 6px; font-size: 11px; color: #b00020; max-height: 120px; overflow-y: auto; }
+  a.opts-link { font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>Naukri Applied-Jobs Sync</h1>
+
+  <div id="not-configured">
+    <p>Not set up yet. Open Options, paste your dashboard's API base URL and the token from the dashboard's "Generate extension token" button.</p>
+    <button id="open-options-btn">Open Options</button>
+  </div>
+
+  <div id="wrong-page">
+    <p>Open <b>naukri.com/myapply/historypage</b> (Applied Jobs history) first, then click the extension again.</p>
+  </div>
+
+  <div id="main">
+    <button id="sync-btn">Scrape &amp; Sync applied jobs</button>
+    <div id="status"></div>
+    <div id="errors" class="errors"></div>
+  </div>
+
+  <p><a class="opts-link" href="#" id="options-link">Options</a></p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

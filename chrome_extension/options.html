@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Naukri Applied-Jobs Sync - Options</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 480px; margin: 30px auto; color: #1a1a1a; }
+  label { display: block; margin-top: 14px; font-size: 13px; font-weight: 600; }
+  input { width: 100%; padding: 8px; font-size: 13px; margin-top: 4px; box-sizing: border-box; }
+  p.hint { font-size: 12px; color: #555; margin: 4px 0 0; }
+  button { margin-top: 18px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+  #status { margin-top: 12px; font-size: 13px; }
+  #status.error { color: #b00020; }
+  #status.success { color: #146c2e; }
+</style>
+</head>
+<body>
+  <h1>Naukri Applied-Jobs Sync</h1>
+  <p class="hint">Connects this extension to your job-triage dashboard. Generate the token from the dashboard's "Chrome extension" panel.</p>
+
+  <label for="base-url">Dashboard API base URL</label>
+  <input type="text" id="base-url" placeholder="https://your-app.up.railway.app">
+  <p class="hint">No trailing slash. Use http://127.0.0.1:8000 for a local dev server.</p>
+
+  <label for="api-token">API token</label>
+  <input type="password" id="api-token" placeholder="Paste the token shown once on the dashboard">
+
+  <button id="save-btn">Save</button>
+  <div id="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

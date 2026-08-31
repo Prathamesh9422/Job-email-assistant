@@ -34,6 +34,19 @@
 
   <section class="panel">
     <div class="panel-head">
+      <h2>Chrome extension</h2>
+      <p>Generate a token for the Naukri Applied-Jobs Sync extension. Paste it into the extension's options page — it's shown only once here.</p>
+    </div>
+    <button id="generate-token-btn" class="btn">Generate extension token</button>
+    <div id="token-display" class="hidden token-display">
+      <input type="text" id="token-value" readonly>
+      <button id="copy-token-btn" class="btn btn-ghost">Copy</button>
+      <p class="section-hint">Save this now — regenerating replaces it, and the old one stops working immediately.</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
       <h2>Outreach candidates</h2>
       <p>Nothing here sends until you click Approve &amp; Send.</p>
     </div>

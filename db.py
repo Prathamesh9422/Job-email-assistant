@@ -110,6 +110,7 @@ def _postgres_schema() -> list[str]:
             google_sub               TEXT UNIQUE NOT NULL,
             refresh_token_encrypted  TEXT NOT NULL,
             is_active                BOOLEAN NOT NULL DEFAULT TRUE,
+            api_token_hash           TEXT UNIQUE,
             created_at               TEXT NOT NULL,
             updated_at               TEXT NOT NULL
         )
@@ -197,6 +198,9 @@ def _postgres_schema() -> list[str]:
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS interview_scheduled_at TEXT",
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS decided_at TEXT",
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS company_source TEXT NOT NULL DEFAULT 'none'",
+        # ARC-0004 (extension auth): a per-user long-lived token, stored only
+        # as a hash, that the Chrome extension sends as Authorization: Bearer.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS api_token_hash TEXT UNIQUE",
         # ARC-0004: browser-plugin-scraped rows have no gmail_message_id and
         # dedup on (company, role, applied_date) instead - see dedup_key below.
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'gmail'",
@@ -211,6 +215,7 @@ def _postgres_schema() -> list[str]:
         "CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)",
         "CREATE INDEX IF NOT EXISTS idx_queue_user ON queue(user_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_dedup_key ON queue(dedup_key)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_token_hash ON users(api_token_hash)",
     ]
 
 
@@ -223,6 +228,7 @@ def _sqlite_schema() -> list[str]:
             google_sub               TEXT UNIQUE NOT NULL,
             refresh_token_encrypted  TEXT NOT NULL,
             is_active                INTEGER NOT NULL DEFAULT 1,
+            api_token_hash           TEXT UNIQUE,
             created_at               TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at               TEXT NOT NULL DEFAULT (datetime('now'))
         )
@@ -312,6 +318,12 @@ def init_db() -> None:
         for stmt in _sqlite_schema():
             conn.execute(text(stmt))
 
+        existing_user_cols = {
+            row[1] for row in conn.execute(text("PRAGMA table_info(users)"))
+        }
+        if "api_token_hash" not in existing_user_cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN api_token_hash TEXT"))
+
         existing_cols = {
             row[1] for row in conn.execute(text("PRAGMA table_info(queue)"))
         }
@@ -353,6 +365,7 @@ def init_db() -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_queue_user ON queue(user_id)"))
         conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_dedup_key ON queue(dedup_key)"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_token_hash ON users(api_token_hash)"))
 
 
 def _make_gmail_message_id_nullable(conn) -> None:
@@ -492,6 +505,24 @@ def deactivate_user(user_id: int) -> None:
             text("UPDATE users SET is_active = :inactive, updated_at = :ts WHERE id = :id"),
             {"inactive": False if _is_postgres() else 0, "ts": _now(), "id": user_id},
         )
+
+
+def set_api_token_hash(user_id: int, token_hash: str) -> None:
+    """Stores only the hash (ARC-0004 extension-auth decision) - the
+    plaintext token is shown to the user once, at generation time, and
+    never persisted. Overwrites/invalidates any previous token."""
+    with get_conn() as conn:
+        conn.execute(
+            text("UPDATE users SET api_token_hash = :hash, updated_at = :ts WHERE id = :id"),
+            {"hash": token_hash, "ts": _now(), "id": user_id},
+        )
+
+
+def get_user_by_api_token_hash(token_hash: str) -> Optional[dict]:
+    with get_conn() as conn:
+        result = conn.execute(text("SELECT * FROM users WHERE api_token_hash = :hash"), {"hash": token_hash})
+        r = result.fetchone()
+        return _deserialize_user(dict(r._mapping)) if r else None
 
 
 # --- Queue (ARC-0001 rows, now scoped to a user per ARC-0002) ---

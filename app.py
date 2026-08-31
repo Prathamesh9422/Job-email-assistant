@@ -417,7 +417,11 @@ def api_skip(row_id: int, current_user: dict = Depends(auth.require_user)):
 class ScrapedJobPayload(BaseModel):
     company: str
     role: str
-    applied_date: str
+    # Optional, not required: a scraped job with no relative-date text (e.g.
+    # "This is a web job (Posted on external site)") has nothing to put
+    # here. browser_ingest.py's per-row validation reports that row's error
+    # without pydantic rejecting the whole batch first.
+    applied_date: Optional[str] = None
     job_link: Optional[str] = None
 
 
@@ -426,11 +430,21 @@ class ScrapedJobsBody(BaseModel):
 
 
 @app.post("/api/queue/ingest-scraped")
-def api_ingest_scraped(body: ScrapedJobsBody, current_user: dict = Depends(auth.require_user)):
-    """Thin pass-through to browser_ingest.py (ARC-0004 invariant 1) - the
-    browser plugin calls this, authenticated by the same session cookie as
-    the dashboard, with the applied-jobs it scraped from the job site."""
+def api_ingest_scraped(body: ScrapedJobsBody, current_user: dict = Depends(auth.require_user_or_token)):
+    """Thin pass-through to browser_ingest.py (ARC-0004 invariant 1) - called
+    by the Chrome extension, authenticated via its per-user API token
+    (ARC-0004 invariant 4), with the applied-jobs it scraped from the job
+    site. Also accepts the normal dashboard session, for local testing."""
     return browser_ingest.ingest_scraped_jobs(current_user["id"], [j.model_dump() for j in body.jobs])
+
+
+@app.post("/api/settings/api-token")
+def api_generate_api_token(current_user: dict = Depends(auth.require_user)):
+    """Generates (or regenerates, invalidating the old one) this user's
+    Chrome-extension API token. Session-only - the token itself must never
+    be usable to mint another token. Returned once; only its hash persists."""
+    token = auth.generate_api_token(current_user["id"])
+    return {"token": token}
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
