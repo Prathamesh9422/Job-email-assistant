@@ -27,6 +27,7 @@
     <div class="chip" id="resume-indicator">Resume: loading...</div>
     <div class="chip" id="scheduler-status">Scheduler: loading...</div>
     <button id="run-now-btn" class="btn">Run Email Check Now</button>
+    <button id="archive-toggle-btn" class="btn btn-ghost">Show archived</button>
     <button id="refresh-btn" class="btn btn-ghost">Refresh</button>
     <button id="signout-btn" class="btn btn-ghost">Sign out</button>
   </header>
@@ -87,6 +88,10 @@
     <label for="preview-body-input">Body</label>
     <textarea id="preview-body-input" rows="14"></textarea>
     <div id="preview-status" class="preview-status"></div>
+    <details class="sent-history">
+      <summary>Sent history</summary>
+      <ul id="sent-history-list"></ul>
+    </details>
     <div class="modal-actions">
       <button id="preview-regenerate" class="btn btn-ghost">Regenerate from template</button>
       <button id="preview-finalize" class="btn primary">Finalize</button>

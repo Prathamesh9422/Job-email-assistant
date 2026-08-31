@@ -28,9 +28,80 @@ first send through HR replies, interview rounds, to offer/rejection.
 """
 
 
+from datetime import datetime, timezone
+
+from config import (
+    STATUS_AWAITING_HR_REPLY,
+    STATUS_DIGEST,
+    STATUS_FAILED,
+    STATUS_INTERVIEW_SCHEDULED,
+    STATUS_NEEDS_INFO,
+    STATUS_OFFER,
+    STATUS_READY,
+    STATUS_REJECTED,
+    STATUS_SENT,
+    STATUS_SKIPPED,
+)
+
+EVENT_SEND = "send"
+EVENT_HR_REPLY = "hr_reply"
+EVENT_SCHEDULE_INTERVIEW = "schedule_interview"
+EVENT_REJECT = "reject"
+EVENT_OFFER = "offer"
+EVENT_SKIP = "skip"
+
+# current status -> event -> (new status, timestamp field to stamp with "now")
+_TRANSITIONS: dict[str, dict[str, tuple[str, str]]] = {
+    STATUS_NEEDS_INFO: {
+        EVENT_SKIP: (STATUS_SKIPPED, "decided_at"),
+    },
+    STATUS_DIGEST: {
+        EVENT_SKIP: (STATUS_SKIPPED, "decided_at"),
+    },
+    STATUS_READY: {
+        EVENT_SEND: (STATUS_SENT, "sent_at"),
+        EVENT_SKIP: (STATUS_SKIPPED, "decided_at"),
+    },
+    # A failed send is retried via the same human Approve & Send action
+    # (ARC-0001 Open items: no automated retry, but a human resend is allowed).
+    STATUS_FAILED: {
+        EVENT_SEND: (STATUS_SENT, "sent_at"),
+        EVENT_SKIP: (STATUS_SKIPPED, "decided_at"),
+    },
+    STATUS_SENT: {
+        EVENT_HR_REPLY: (STATUS_AWAITING_HR_REPLY, "hr_reply_at"),
+        EVENT_SCHEDULE_INTERVIEW: (STATUS_INTERVIEW_SCHEDULED, "interview_scheduled_at"),
+        EVENT_REJECT: (STATUS_REJECTED, "decided_at"),
+        EVENT_OFFER: (STATUS_OFFER, "decided_at"),
+    },
+    STATUS_AWAITING_HR_REPLY: {
+        EVENT_SCHEDULE_INTERVIEW: (STATUS_INTERVIEW_SCHEDULED, "interview_scheduled_at"),
+        EVENT_REJECT: (STATUS_REJECTED, "decided_at"),
+        EVENT_OFFER: (STATUS_OFFER, "decided_at"),
+    },
+    STATUS_INTERVIEW_SCHEDULED: {
+        EVENT_SCHEDULE_INTERVIEW: (STATUS_INTERVIEW_SCHEDULED, "interview_scheduled_at"),
+        EVENT_REJECT: (STATUS_REJECTED, "decided_at"),
+        EVENT_OFFER: (STATUS_OFFER, "decided_at"),
+    },
+}
+
+
 def apply_transition(row: dict, event: str, **kwargs) -> dict:
-    # TODO(ARC-0001): implement per the ADR — look up the current status in
-    # a transition table, validate the requested event against it, and
-    # return the updated fields (status, round counter, timestamps) for the
-    # caller to persist via db.py. Raise on an illegal transition.
-    raise NotImplementedError
+    """Validates `event` against `row`'s current status and returns the
+    fields the caller (app.py) should persist via db.py. Raises ValueError
+    on an illegal transition instead of silently applying it (invariant 2)."""
+    current_status = row.get("status")
+    allowed = _TRANSITIONS.get(current_status, {})
+    if event not in allowed:
+        raise ValueError(f"illegal transition: {event!r} from status {current_status!r}")
+
+    new_status, timestamp_field = allowed[event]
+    now = datetime.now(timezone.utc).isoformat()
+    fields: dict = {"status": new_status, timestamp_field: now}
+
+    if event == EVENT_SCHEDULE_INTERVIEW:
+        # Round is a counter on the row, never a new status string (invariant 3).
+        fields["interview_round"] = (row.get("interview_round") or 0) + 1
+
+    return fields

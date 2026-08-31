@@ -13,7 +13,32 @@ const previewModal = document.getElementById("preview-modal");
 const previewSubjectInput = document.getElementById("preview-subject-input");
 const previewBodyInput = document.getElementById("preview-body-input");
 const previewStatus = document.getElementById("preview-status");
+const sentHistoryList = document.getElementById("sent-history-list");
+const archiveToggleBtn = document.getElementById("archive-toggle-btn");
 let currentPreview = { id: null, template: null };
+let showingArchive = false;
+
+// Mirrors lifecycle.py's transition table, for enabling only valid "Advance"
+// options client-side - the server (lifecycle.apply_transition) is still the
+// single place transitions are actually validated (ARC-0001 invariant 1).
+const ADVANCE_EVENTS = {
+  sent: [
+    ["hr_reply", "HR replied"],
+    ["schedule_interview", "Schedule interview"],
+    ["reject", "Mark rejected"],
+    ["offer", "Mark offer"],
+  ],
+  awaiting_hr_reply: [
+    ["schedule_interview", "Schedule interview"],
+    ["reject", "Mark rejected"],
+    ["offer", "Mark offer"],
+  ],
+  interview_scheduled: [
+    ["schedule_interview", "Next round"],
+    ["reject", "Mark rejected"],
+    ["offer", "Mark offer"],
+  ],
+};
 
 document.getElementById("preview-close").addEventListener("click", () => {
   previewModal.classList.add("hidden");
@@ -33,7 +58,10 @@ async function loadResume() {
 }
 
 async function loadQueue() {
-  const res = await fetch("/api/queue?status=needs_info,ready,failed");
+  // No status param => server defaults to ACTIONABLE_STATUSES (every
+  // non-terminal row, ARC-0003 invariant 1) unless the Archived toggle is on.
+  const url = showingArchive ? "/api/queue?status=offer,rejected,skipped" : "/api/queue";
+  const res = await fetch(url);
   const rows = await res.json();
   renderRows(rows);
 }
@@ -158,7 +186,12 @@ function renderRow(row) {
 
   const tdCompany = document.createElement("td");
   tdCompany.dataset.label = "Company";
-  tdCompany.textContent = row.company || "(unknown)";
+  const companyInput = document.createElement("input");
+  companyInput.type = "text";
+  companyInput.value = row.company || "";
+  companyInput.placeholder = "Company name";
+  companyInput.addEventListener("change", () => patchRow(row.id, { company: companyInput.value }));
+  tdCompany.appendChild(companyInput);
 
   const tdRole = document.createElement("td");
   tdRole.dataset.label = "Role";
@@ -207,6 +240,25 @@ function renderRow(row) {
     err.textContent = row.error_message;
     tdStatus.appendChild(err);
   }
+  tdStatus.appendChild(buildTimeline(row));
+
+  const advanceOptions = ADVANCE_EVENTS[row.status];
+  if (advanceOptions) {
+    const advanceRow = document.createElement("div");
+    advanceRow.className = "advance-row";
+    const select = document.createElement("select");
+    for (const [event, label] of advanceOptions) {
+      const opt = document.createElement("option");
+      opt.value = event;
+      opt.textContent = label;
+      select.appendChild(opt);
+    }
+    const advanceBtn = document.createElement("button");
+    advanceBtn.textContent = "Record";
+    advanceBtn.addEventListener("click", () => advanceRowLifecycle(row.id, select.value));
+    advanceRow.append(select, advanceBtn);
+    tdStatus.appendChild(advanceRow);
+  }
 
   const tdActions = document.createElement("td");
   tdActions.dataset.label = "Actions";
@@ -237,6 +289,57 @@ function renderRow(row) {
   return tr;
 }
 
+const TERMINAL_STATUSES = new Set(["offer", "rejected", "skipped"]);
+
+// Variable-length lifecycle timeline (ARC-0003 "Lifecycle Progress UI"): one
+// entry per event actually recorded on the row, not a fixed N-step indicator.
+// Note: only the most recent interview round's timestamp is stored, so this
+// shows the current round, not a full per-round history (interview_round is
+// a counter, per ARC-0001 invariant 3, not a row per round).
+function buildTimeline(row) {
+  const list = document.createElement("ol");
+  list.className = "lifecycle-timeline";
+
+  const entries = [{ label: "Applied", at: row.received_at, done: true }];
+  if (row.sent_at) entries.push({ label: "Sent", at: row.sent_at, done: true });
+  if (row.hr_reply_at) entries.push({ label: "HR replied", at: row.hr_reply_at, done: true });
+  if (row.interview_scheduled_at) {
+    entries.push({
+      label: `Interview — Round ${row.interview_round || 1}`,
+      at: row.interview_scheduled_at,
+      done: true,
+    });
+  }
+  if (TERMINAL_STATUSES.has(row.status) && row.status !== "skipped") {
+    entries.push({ label: row.status === "offer" ? "Offer" : "Rejected", at: row.decided_at, done: true });
+  } else if (row.sent_at) {
+    entries.push({ label: "Outcome", at: null, done: false });
+  }
+
+  for (const entry of entries) {
+    const li = document.createElement("li");
+    li.className = entry.done ? "done" : "pending";
+    const text = entry.at ? `${entry.label} — ${new Date(entry.at).toLocaleDateString()}` : entry.label;
+    li.textContent = text;
+    list.appendChild(li);
+  }
+  return list;
+}
+
+async function advanceRowLifecycle(id, event) {
+  const res = await fetch(`/api/queue/${id}/advance`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ event }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.detail || "Could not record that update");
+    return;
+  }
+  loadQueue();
+}
+
 async function patchRow(id, fields) {
   await fetch(`/api/queue/${id}`, {
     method: "PATCH",
@@ -261,10 +364,34 @@ async function scrapeRow(id) {
   loadQueue();
 }
 
+async function loadSentHistory(id) {
+  const res = await fetch(`/api/queue/${id}/sent-records`);
+  const records = await res.json();
+  sentHistoryList.innerHTML = "";
+  if (!res.ok || records.length === 0) {
+    sentHistoryList.innerHTML = "<li>Nothing sent for this candidate yet.</li>";
+    return;
+  }
+  for (const rec of records) {
+    const li = document.createElement("li");
+    const when = new Date(rec.sent_at).toLocaleString();
+    li.innerHTML = `<strong>${when}</strong><br>${escapeHtml(rec.subject)}`;
+    li.title = rec.body;
+    sentHistoryList.appendChild(li);
+  }
+}
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s || "";
+  return div.innerHTML;
+}
+
 async function previewRow(id, template) {
   currentPreview = { id, template };
   previewStatus.textContent = "";
   previewModal.classList.remove("hidden");
+  loadSentHistory(id);
 
   const finalRes = await fetch(`/api/queue/${id}/final`);
   const finalData = await finalRes.json();
@@ -334,6 +461,12 @@ refreshBtn.addEventListener("click", () => {
   loadQueue();
   loadDigests();
   loadSchedulerStatus();
+});
+
+archiveToggleBtn.addEventListener("click", () => {
+  showingArchive = !showingArchive;
+  archiveToggleBtn.textContent = showingArchive ? "Show actionable" : "Show archived";
+  loadQueue();
 });
 
 signoutBtn.addEventListener("click", async () => {

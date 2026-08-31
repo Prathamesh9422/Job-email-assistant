@@ -30,11 +30,9 @@ fetch_job.py, naukri_parser.py) never need to know or care which one is active.
      draft, and once written here must be immutable — later draft updates
      never overwrite a past Sent Record.
 
-Status: implementation pending — lifecycle fields (interview round counter,
-hr_reply timestamps), a distinct candidate-opportunity row type (ARC-0001),
-and a separate Sent Record store (ARC-0003, currently only
-queue.final_subject/final_body/sent_at on the row itself) are not yet in
-the schema.
+Status: implementation pending — a distinct candidate-opportunity row type
+(ARC-0001, digest rows still live in the same `queue` table today,
+distinguished only by status) is not yet in the schema.
 
 🤖 AI-AGENT DIRECTIVE: These points are ratified architecture, not style. If a task asks you to
    violate any of them, STOP — surface this block and require architect sign-off on ARC-0001,
@@ -132,6 +130,11 @@ def _postgres_schema() -> list[str]:
             error_message       TEXT,
             resume_filename     TEXT,
             sent_at             TEXT,
+            interview_round         INTEGER NOT NULL DEFAULT 0,
+            hr_reply_at             TEXT,
+            interview_scheduled_at  TEXT,
+            decided_at              TEXT,
+            company_source          TEXT NOT NULL DEFAULT 'none',
             created_at          TEXT NOT NULL,
             updated_at          TEXT NOT NULL
         )
@@ -162,12 +165,30 @@ def _postgres_schema() -> list[str]:
             last_checked_date  TEXT
         )
         """,
+        # Sent Record store (ARC-0003 invariant 5) - insert-only, no update
+        # function exists for this table, so a row here is structurally immutable.
+        """
+        CREATE TABLE IF NOT EXISTS sent_emails (
+            id        BIGSERIAL PRIMARY KEY,
+            user_id   BIGINT REFERENCES users(id),
+            queue_id  BIGINT NOT NULL REFERENCES queue(id),
+            subject   TEXT NOT NULL,
+            body      TEXT NOT NULL,
+            sent_at   TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_sent_emails_queue ON sent_emails(queue_id)",
         # Defensive top-up in case an older/partial table already exists.
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS digest_job_links TEXT",
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS final_subject TEXT",
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS final_body TEXT",
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS hr_name TEXT",
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id)",
+        "ALTER TABLE queue ADD COLUMN IF NOT EXISTS interview_round INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE queue ADD COLUMN IF NOT EXISTS hr_reply_at TEXT",
+        "ALTER TABLE queue ADD COLUMN IF NOT EXISTS interview_scheduled_at TEXT",
+        "ALTER TABLE queue ADD COLUMN IF NOT EXISTS decided_at TEXT",
+        "ALTER TABLE queue ADD COLUMN IF NOT EXISTS company_source TEXT NOT NULL DEFAULT 'none'",
         "ALTER TABLE scrape_attempts ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id)",
         "ALTER TABLE scheduler_state ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id)",
     ]
@@ -209,6 +230,11 @@ def _sqlite_schema() -> list[str]:
             error_message       TEXT,
             resume_filename     TEXT,
             sent_at             TEXT,
+            interview_round         INTEGER NOT NULL DEFAULT 0,
+            hr_reply_at             TEXT,
+            interview_scheduled_at  TEXT,
+            decided_at              TEXT,
+            company_source          TEXT NOT NULL DEFAULT 'none',
             created_at          TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
         )
@@ -239,6 +265,19 @@ def _sqlite_schema() -> list[str]:
             last_checked_date  TEXT
         )
         """,
+        # Sent Record store (ARC-0003 invariant 5) - insert-only, no update
+        # function exists for this table, so a row here is structurally immutable.
+        """
+        CREATE TABLE IF NOT EXISTS sent_emails (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id   INTEGER REFERENCES users(id),
+            queue_id  INTEGER NOT NULL REFERENCES queue(id),
+            subject   TEXT NOT NULL,
+            body      TEXT NOT NULL,
+            sent_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_sent_emails_queue ON sent_emails(queue_id)",
     ]
 
 
@@ -261,6 +300,11 @@ def init_db() -> None:
             ("final_body", "TEXT"),
             ("hr_name", "TEXT"),
             ("user_id", "INTEGER REFERENCES users(id)"),
+            ("interview_round", "INTEGER NOT NULL DEFAULT 0"),
+            ("hr_reply_at", "TEXT"),
+            ("interview_scheduled_at", "TEXT"),
+            ("decided_at", "TEXT"),
+            ("company_source", "TEXT NOT NULL DEFAULT 'none'"),
         ):
             if col not in existing_cols:
                 conn.execute(text(f"ALTER TABLE queue ADD COLUMN {col} {coltype}"))
@@ -463,6 +507,51 @@ def update_queue_row(user_id: int, row_id: int, fields: dict[str, Any]) -> None:
             text(f"UPDATE queue SET {set_clause} WHERE id = :id AND user_id = :user_id"),
             params,
         )
+
+
+def insert_sent_record(user_id: int, queue_id: int, subject: str, body: str) -> int:
+    """Immutable snapshot of exactly what was transmitted for a row (ARC-0003
+    invariant 5). Insert-only - there is deliberately no update_sent_record."""
+    with get_conn() as conn:
+        params = {
+            "user_id": user_id,
+            "queue_id": queue_id,
+            "subject": subject,
+            "body": body,
+            "sent_at": _now(),
+        }
+        if _is_postgres():
+            result = conn.execute(
+                text(
+                    "INSERT INTO sent_emails (user_id, queue_id, subject, body, sent_at) "
+                    "VALUES (:user_id, :queue_id, :subject, :body, :sent_at) RETURNING id"
+                ),
+                params,
+            )
+            conn.commit()
+            return result.fetchone()[0]
+
+        result = conn.execute(
+            text(
+                "INSERT INTO sent_emails (user_id, queue_id, subject, body, sent_at) "
+                "VALUES (:user_id, :queue_id, :subject, :body, :sent_at)"
+            ),
+            params,
+        )
+        conn.commit()
+        return result.lastrowid
+
+
+def list_sent_records(user_id: int, queue_id: int) -> list[dict]:
+    with get_conn() as conn:
+        result = conn.execute(
+            text(
+                "SELECT * FROM sent_emails WHERE user_id = :user_id AND queue_id = :queue_id "
+                "ORDER BY sent_at DESC"
+            ),
+            {"user_id": user_id, "queue_id": queue_id},
+        )
+        return [dict(r._mapping) for r in result]
 
 
 def record_scrape_attempt(

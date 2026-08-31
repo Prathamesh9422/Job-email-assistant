@@ -50,12 +50,14 @@ import db
 import excel_tracker
 import fetch_job
 import gmail_client
+import lifecycle
 import scraper
 from config import (
     RESUMES_DIR,
     SESSION_SECRET_KEY,
     STATIC_DIR,
     TRACKER_FILE,
+    ACTIONABLE_STATUSES,
     STATUS_FAILED,
     STATUS_NEEDS_INFO,
     STATUS_READY,
@@ -201,7 +203,7 @@ def get_resume(current_user: dict = Depends(auth.require_user)):
 
 @app.get("/api/queue")
 def api_list_queue(status: Optional[str] = None, current_user: dict = Depends(auth.require_user)):
-    statuses = status.split(",") if status else [STATUS_NEEDS_INFO, STATUS_READY]
+    statuses = status.split(",") if status else list(ACTIONABLE_STATUSES)
     return db.list_queue(current_user["id"], statuses)
 
 
@@ -216,6 +218,7 @@ def api_get_queue_row(row_id: int, current_user: dict = Depends(auth.require_use
 class PatchBody(BaseModel):
     hr_email: Optional[str] = None
     hr_name: Optional[str] = None
+    company: Optional[str] = None
     template_used: Optional[str] = None
 
 
@@ -231,6 +234,9 @@ def api_patch_queue_row(row_id: int, body: PatchBody, current_user: dict = Depen
         fields["status"] = STATUS_READY if body.hr_email else STATUS_NEEDS_INFO
     if body.hr_name is not None:
         fields["hr_name"] = body.hr_name
+    if body.company is not None:
+        fields["company"] = body.company
+        fields["company_source"] = "manual"
     if body.template_used is not None:
         fields["template_used"] = body.template_used
     db.update_queue_row(current_user["id"], row_id, fields)
@@ -341,21 +347,52 @@ def api_send(row_id: int, current_user: dict = Depends(auth.require_user)):
         excel_tracker.upsert_tracker_row(db.get_queue_row(current_user["id"], row_id))
         raise HTTPException(500, f"send failed: {e}")
 
-    from datetime import datetime, timezone
-
+    transition_fields = lifecycle.apply_transition(row, "send")
     db.update_queue_row(
         current_user["id"],
         row_id,
         {
-            "status": STATUS_SENT,
-            "sent_at": datetime.now(timezone.utc).isoformat(),
+            **transition_fields,
             "resume_filename": resume.name if resume else None,
             "template_used": template_used,
         },
     )
+    # Immutable Sent Record of exactly what was transmitted (ARC-0003 invariant 5),
+    # kept distinct from the still-editable final_subject/final_body draft.
+    db.insert_sent_record(current_user["id"], row_id, rendered["subject"], rendered["body"])
     updated_row = db.get_queue_row(current_user["id"], row_id)
     excel_tracker.upsert_tracker_row(updated_row)
     return {"result": result, "row": updated_row}
+
+
+@app.get("/api/queue/{row_id}/sent-records")
+def api_list_sent_records(row_id: int, current_user: dict = Depends(auth.require_user)):
+    row = db.get_queue_row(current_user["id"], row_id)
+    if not row:
+        raise HTTPException(404, "not found")
+    return db.list_sent_records(current_user["id"], row_id)
+
+
+class AdvanceBody(BaseModel):
+    event: str
+
+
+@app.post("/api/queue/{row_id}/advance")
+def api_advance(row_id: int, body: AdvanceBody, current_user: dict = Depends(auth.require_user)):
+    """Human-triggered lifecycle progress (HR replied / interview scheduled /
+    rejected / offer) - the only path to these statuses today, since
+    automated HR-reply classification (ARC-0001) isn't implemented yet."""
+    row = db.get_queue_row(current_user["id"], row_id)
+    if not row:
+        raise HTTPException(404, "not found")
+    try:
+        fields = lifecycle.apply_transition(row, body.event)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    db.update_queue_row(current_user["id"], row_id, fields)
+    updated_row = db.get_queue_row(current_user["id"], row_id)
+    excel_tracker.upsert_tracker_row(updated_row)
+    return updated_row
 
 
 @app.post("/api/queue/{row_id}/skip")
@@ -363,7 +400,11 @@ def api_skip(row_id: int, current_user: dict = Depends(auth.require_user)):
     row = db.get_queue_row(current_user["id"], row_id)
     if not row:
         raise HTTPException(404, "not found")
-    db.update_queue_row(current_user["id"], row_id, {"status": STATUS_SKIPPED})
+    try:
+        fields = lifecycle.apply_transition(row, "skip")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    db.update_queue_row(current_user["id"], row_id, fields)
     updated_row = db.get_queue_row(current_user["id"], row_id)
     excel_tracker.upsert_tracker_row(updated_row)
     return updated_row

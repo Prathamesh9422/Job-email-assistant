@@ -14,6 +14,14 @@
   --failed-soft: #FDECEC;
   --skipped: #64748B;
   --skipped-soft: #F1F5F9;
+  --awaiting: #7C3AED;
+  --awaiting-soft: #F3EEFE;
+  --interview: #0891B2;
+  --interview-soft: #E6F7FA;
+  --offer: #16A34A;
+  --offer-soft: #E9F8EF;
+  --rejected: #DC2626;
+  --rejected-soft: #FDECEC;
 }
 
 * { box-sizing: border-box; }
@@ -252,6 +260,92 @@ td input[type="text"] {
 .status-sent { background: var(--blue-soft); color: var(--blue); }
 .status-failed { background: var(--failed-soft); color: var(--failed); }
 .status-skipped { background: var(--skipped-soft); color: var(--skipped); }
+.status-awaiting_hr_reply { background: var(--awaiting-soft); color: var(--awaiting); }
+.status-interview_scheduled { background: var(--interview-soft); color: var(--interview); }
+.status-offer { background: var(--offer-soft); color: var(--offer); }
+.status-rejected { background: var(--rejected-soft); color: var(--rejected); }
+
+/* Lifecycle timeline (ARC-0003) */
+
+.lifecycle-timeline {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.lifecycle-timeline li {
+  padding-left: 1rem;
+  position: relative;
+}
+
+.lifecycle-timeline li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.3em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.lifecycle-timeline li.done::before { background: var(--ready); }
+.lifecycle-timeline li.pending {
+  color: var(--muted);
+  font-style: italic;
+}
+.lifecycle-timeline li.pending::before {
+  background: transparent;
+  border: 1px solid var(--muted);
+}
+
+.advance-row {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.advance-row select {
+  width: auto;
+  font-size: 0.75rem;
+  padding: 0.3rem 0.4rem;
+}
+
+.advance-row button {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.55rem;
+}
+
+/* Sent history (preview modal) */
+
+.sent-history {
+  margin-top: 0.9rem;
+  font-size: 0.82rem;
+}
+
+.sent-history summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+}
+
+#sent-history-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  max-height: 8rem;
+  overflow-y: auto;
+}
+
+#sent-history-list li {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
 
 /* Digest links */
 

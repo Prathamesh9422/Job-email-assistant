@@ -92,9 +92,36 @@ DEFAULT_LOOKBACK_DAYS = 5
 STATUS_NEEDS_INFO = "needs_info"
 STATUS_READY = "ready"
 STATUS_SENT = "sent"
+STATUS_AWAITING_HR_REPLY = "awaiting_hr_reply"
+STATUS_INTERVIEW_SCHEDULED = "interview_scheduled"
+STATUS_OFFER = "offer"
+STATUS_REJECTED = "rejected"
 STATUS_SKIPPED = "skipped"
 STATUS_FAILED = "failed"
 STATUS_DIGEST = "digest"
+
+ALL_STATUSES = (
+    STATUS_NEEDS_INFO,
+    STATUS_READY,
+    STATUS_SENT,
+    STATUS_AWAITING_HR_REPLY,
+    STATUS_INTERVIEW_SCHEDULED,
+    STATUS_OFFER,
+    STATUS_REJECTED,
+    STATUS_SKIPPED,
+    STATUS_FAILED,
+    STATUS_DIGEST,
+)
+
+# Terminal = a human has deliberately closed the row out (ARC-0003 invariant 1).
+# Everything else, including "sent", stays in the dashboard's default Actionables View.
+# STATUS_DIGEST is excluded too - candidate-digest rows are a distinct "apply?"
+# opportunity list, surfaced in their own dashboard section (ARC-0001 invariant 9),
+# not the application queue's Actionables View.
+TERMINAL_STATUSES = (STATUS_OFFER, STATUS_REJECTED, STATUS_SKIPPED)
+ACTIONABLE_STATUSES = tuple(
+    s for s in ALL_STATUSES if s not in TERMINAL_STATUSES and s != STATUS_DIGEST
+)
 
 # hr_email_source values
 SOURCE_HEADER = "email_header"
