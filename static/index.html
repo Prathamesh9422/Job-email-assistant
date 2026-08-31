@@ -10,17 +10,25 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<div class="shell">
+<div id="signin-screen" class="hidden signin-screen">
+  <h1>Naukri Job Triage</h1>
+  <p>Sign in with your Google account to see your queue.</p>
+  <a id="signin-btn" class="btn primary" href="/auth/login">Sign in with Google</a>
+</div>
+
+<div class="shell hidden" id="app-shell">
 
   <header class="topbar">
     <div class="brand">
       <h1>Naukri Job Triage</h1>
       <span class="brand-tag">manual approval only</span>
     </div>
+    <div class="chip" id="account-chip"></div>
     <div class="chip" id="resume-indicator">Resume: loading...</div>
     <div class="chip" id="scheduler-status">Scheduler: loading...</div>
     <button id="run-now-btn" class="btn">Run Email Check Now</button>
     <button id="refresh-btn" class="btn btn-ghost">Refresh</button>
+    <button id="signout-btn" class="btn btn-ghost">Sign out</button>
   </header>
 
   <section class="panel">

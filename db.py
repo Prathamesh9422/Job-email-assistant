@@ -16,16 +16,17 @@ fetch_job.py, naukri_parser.py) never need to know or care which one is active.
      type), never silently merged.
 
 ⛔ ARCHITECTURAL INVARIANT — ARC-0002  ·  owner: @architect  ·  full text: docs/architecture/ARC-0002.md
-  4. Every row carries an owning User Scope. Reads/writes from the Ingestion
-     Path or Review & Approval Path must be scoped to one user's identity —
-     cross-user reads/writes are forbidden.
-  5. This module (or a table it owns) is also where the Credential Store
-     lives — one OAuth credential per user identity, never shared.
+  4. Every queue/scrape_attempts/scheduler_state row carries an owning
+     user_id. Every read/write function below requires a user_id and
+     filters/writes by it — cross-user reads/writes are forbidden.
+     get_queue_row/update_queue_row return None for a row that exists but
+     belongs to a different user, never leaking its existence.
+  5. The users table is the Credential Store — one row per user identity,
+     refresh_token_encrypted only, never a plaintext token.
 
-Status: implementation pending — the schema does not yet carry lifecycle
-fields (interview round counter, hr_reply timestamps), a distinct
-candidate-opportunity row type (ARC-0001), a User Scope column, or a
-Credential Store table (ARC-0002).
+Status: implementation pending — lifecycle fields (interview round counter,
+hr_reply timestamps) and a distinct candidate-opportunity row type
+(ARC-0001) are not yet in the schema.
 
 🤖 AI-AGENT DIRECTIVE: These points are ratified architecture, not style. If a task asks you to
    violate any of them, STOP — surface this block and require architect sign-off on ARC-0001 or
@@ -37,12 +38,14 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
+from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-from config import DATABASE_URL, SOURCE_NONE, STATUS_NEEDS_INFO
+from config import CREDENTIAL_ENCRYPTION_KEY, DATABASE_URL, SOURCE_NONE, STATUS_NEEDS_INFO
 
 _engine: Optional[Engine] = None
+_fernet: Optional[Fernet] = None
 
 
 def get_engine() -> Engine:
@@ -50,6 +53,21 @@ def get_engine() -> Engine:
     if _engine is None:
         _engine = create_engine(DATABASE_URL, future=True)
     return _engine
+
+
+def _get_fernet() -> Fernet:
+    global _fernet
+    if _fernet is None:
+        _fernet = Fernet(CREDENTIAL_ENCRYPTION_KEY)
+    return _fernet
+
+
+def _encrypt(plaintext: str) -> str:
+    return _get_fernet().encrypt(plaintext.encode()).decode()
+
+
+def _decrypt(ciphertext: str) -> str:
+    return _get_fernet().decrypt(ciphertext.encode()).decode()
 
 
 def _is_postgres() -> bool:
@@ -73,8 +91,20 @@ def get_conn():
 def _postgres_schema() -> list[str]:
     return [
         """
+        CREATE TABLE IF NOT EXISTS users (
+            id                       BIGSERIAL PRIMARY KEY,
+            email                    TEXT UNIQUE NOT NULL,
+            google_sub               TEXT UNIQUE NOT NULL,
+            refresh_token_encrypted  TEXT NOT NULL,
+            is_active                BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at               TEXT NOT NULL,
+            updated_at               TEXT NOT NULL
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS queue (
             id                  BIGSERIAL PRIMARY KEY,
+            user_id             BIGINT REFERENCES users(id),
             gmail_message_id    TEXT UNIQUE NOT NULL,
             gmail_thread_id     TEXT,
             received_at         TEXT NOT NULL,
@@ -99,9 +129,11 @@ def _postgres_schema() -> list[str]:
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)",
+        "CREATE INDEX IF NOT EXISTS idx_queue_user ON queue(user_id)",
         """
         CREATE TABLE IF NOT EXISTS scrape_attempts (
             id            BIGSERIAL PRIMARY KEY,
+            user_id       BIGINT REFERENCES users(id),
             queue_id      BIGINT NOT NULL REFERENCES queue(id),
             attempted_at  TEXT NOT NULL,
             company_url   TEXT,
@@ -112,6 +144,7 @@ def _postgres_schema() -> list[str]:
         """
         CREATE TABLE IF NOT EXISTS scheduler_state (
             id                 BIGSERIAL PRIMARY KEY,
+            user_id            BIGINT REFERENCES users(id),
             run_started_at     TEXT NOT NULL,
             run_finished_at    TEXT,
             status             TEXT NOT NULL,
@@ -126,14 +159,29 @@ def _postgres_schema() -> list[str]:
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS final_subject TEXT",
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS final_body TEXT",
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS hr_name TEXT",
+        "ALTER TABLE queue ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id)",
+        "ALTER TABLE scrape_attempts ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id)",
+        "ALTER TABLE scheduler_state ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id)",
     ]
 
 
 def _sqlite_schema() -> list[str]:
     return [
         """
+        CREATE TABLE IF NOT EXISTS users (
+            id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+            email                    TEXT UNIQUE NOT NULL,
+            google_sub               TEXT UNIQUE NOT NULL,
+            refresh_token_encrypted  TEXT NOT NULL,
+            is_active                INTEGER NOT NULL DEFAULT 1,
+            created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at               TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS queue (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id             INTEGER REFERENCES users(id),
             gmail_message_id    TEXT UNIQUE NOT NULL,
             gmail_thread_id     TEXT,
             received_at         TEXT NOT NULL,
@@ -158,9 +206,11 @@ def _sqlite_schema() -> list[str]:
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)",
+        "CREATE INDEX IF NOT EXISTS idx_queue_user ON queue(user_id)",
         """
         CREATE TABLE IF NOT EXISTS scrape_attempts (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       INTEGER REFERENCES users(id),
             queue_id      INTEGER NOT NULL REFERENCES queue(id),
             attempted_at  TEXT NOT NULL DEFAULT (datetime('now')),
             company_url   TEXT,
@@ -171,6 +221,7 @@ def _sqlite_schema() -> list[str]:
         """
         CREATE TABLE IF NOT EXISTS scheduler_state (
             id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id            INTEGER REFERENCES users(id),
             run_started_at     TEXT NOT NULL,
             run_finished_at    TEXT,
             status             TEXT NOT NULL,
@@ -196,15 +247,119 @@ def init_db() -> None:
         existing_cols = {
             row[1] for row in conn.execute(text("PRAGMA table_info(queue)"))
         }
-        for col in ("digest_job_links", "final_subject", "final_body", "hr_name"):
+        for col, coltype in (
+            ("digest_job_links", "TEXT"),
+            ("final_subject", "TEXT"),
+            ("final_body", "TEXT"),
+            ("hr_name", "TEXT"),
+            ("user_id", "INTEGER REFERENCES users(id)"),
+        ):
             if col not in existing_cols:
-                conn.execute(text(f"ALTER TABLE queue ADD COLUMN {col} TEXT"))
+                conn.execute(text(f"ALTER TABLE queue ADD COLUMN {col} {coltype}"))
+
+        for table in ("scrape_attempts", "scheduler_state"):
+            existing = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+            if "user_id" not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER REFERENCES users(id)"))
 
 
-def insert_queue_row(conn, row: dict) -> Optional[int]:
-    """Insert a parsed Naukri email into the queue. Returns new row id, or None if it already existed."""
+# --- Users / Credential Store (ARC-0002) ---
+
+
+def upsert_user(email: str, google_sub: str, refresh_token: str) -> dict:
+    """Create or update the stored user for this Google identity. The refresh
+    token is encrypted at rest and replaces any previously stored one."""
+    ts = _now()
+    encrypted = _encrypt(refresh_token)
+    with get_conn() as conn:
+        if _is_postgres():
+            result = conn.execute(
+                text(
+                    """
+                    INSERT INTO users (email, google_sub, refresh_token_encrypted, is_active, created_at, updated_at)
+                    VALUES (:email, :google_sub, :token, TRUE, :ts, :ts)
+                    ON CONFLICT (google_sub) DO UPDATE SET
+                        email = EXCLUDED.email,
+                        refresh_token_encrypted = EXCLUDED.refresh_token_encrypted,
+                        is_active = TRUE,
+                        updated_at = EXCLUDED.updated_at
+                    RETURNING id
+                    """
+                ),
+                {"email": email, "google_sub": google_sub, "token": encrypted, "ts": ts},
+            )
+            conn.commit()
+            user_id = result.fetchone()[0]
+        else:
+            existing = conn.execute(
+                text("SELECT id FROM users WHERE google_sub = :google_sub"), {"google_sub": google_sub}
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    text(
+                        "UPDATE users SET email = :email, refresh_token_encrypted = :token, "
+                        "is_active = 1, updated_at = :ts WHERE id = :id"
+                    ),
+                    {"email": email, "token": encrypted, "ts": ts, "id": existing[0]},
+                )
+                user_id = existing[0]
+            else:
+                result = conn.execute(
+                    text(
+                        "INSERT INTO users (email, google_sub, refresh_token_encrypted, is_active, created_at, updated_at) "
+                        "VALUES (:email, :google_sub, :token, 1, :ts, :ts)"
+                    ),
+                    {"email": email, "google_sub": google_sub, "token": encrypted, "ts": ts},
+                )
+                user_id = result.lastrowid
+            conn.commit()
+    return get_user(user_id)
+
+
+def _deserialize_user(row: dict) -> dict:
+    row = dict(row)
+    row["refresh_token"] = _decrypt(row.pop("refresh_token_encrypted"))
+    row["is_active"] = bool(row["is_active"])
+    return row
+
+
+def get_user(user_id: int) -> Optional[dict]:
+    with get_conn() as conn:
+        result = conn.execute(text("SELECT * FROM users WHERE id = :id"), {"id": user_id})
+        r = result.fetchone()
+        return _deserialize_user(dict(r._mapping)) if r else None
+
+
+def get_user_by_email(email: str) -> Optional[dict]:
+    with get_conn() as conn:
+        result = conn.execute(text("SELECT * FROM users WHERE email = :email"), {"email": email})
+        r = result.fetchone()
+        return _deserialize_user(dict(r._mapping)) if r else None
+
+
+def list_active_users() -> list[dict]:
+    with get_conn() as conn:
+        result = conn.execute(text("SELECT * FROM users WHERE is_active = :active"), {"active": True if _is_postgres() else 1})
+        return [_deserialize_user(dict(r._mapping)) for r in result]
+
+
+def deactivate_user(user_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            text("UPDATE users SET is_active = :inactive, updated_at = :ts WHERE id = :id"),
+            {"inactive": False if _is_postgres() else 0, "ts": _now(), "id": user_id},
+        )
+
+
+# --- Queue (ARC-0001 rows, now scoped to a user per ARC-0002) ---
+
+
+def insert_queue_row(conn, user_id: int, row: dict) -> Optional[int]:
+    """Insert a parsed Naukri email into the queue for one user. Returns new
+    row id, or None if it already existed."""
     ts = _now()
     params = {
+        "user_id": user_id,
         "gmail_message_id": row["gmail_message_id"],
         "gmail_thread_id": row.get("gmail_thread_id"),
         "received_at": row["received_at"],
@@ -249,29 +404,44 @@ def _deserialize(row: dict) -> dict:
     return row
 
 
-def list_queue(statuses: Optional[Iterable[str]] = None) -> list[dict]:
+def list_queue(user_id: int, statuses: Optional[Iterable[str]] = None) -> list[dict]:
     with get_conn() as conn:
+        params: dict[str, Any] = {"user_id": user_id}
         if statuses:
             statuses = list(statuses)
-            params = {f"s{i}": s for i, s in enumerate(statuses)}
-            placeholders = ", ".join(f":{k}" for k in params)
+            status_params = {f"s{i}": s for i, s in enumerate(statuses)}
+            placeholders = ", ".join(f":{k}" for k in status_params)
+            params.update(status_params)
             result = conn.execute(
-                text(f"SELECT * FROM queue WHERE status IN ({placeholders}) ORDER BY received_at DESC"),
+                text(
+                    f"SELECT * FROM queue WHERE user_id = :user_id AND status IN ({placeholders}) "
+                    "ORDER BY received_at DESC"
+                ),
                 params,
             )
         else:
-            result = conn.execute(text("SELECT * FROM queue ORDER BY received_at DESC"))
+            result = conn.execute(
+                text("SELECT * FROM queue WHERE user_id = :user_id ORDER BY received_at DESC"),
+                params,
+            )
         return [_deserialize(dict(r._mapping)) for r in result]
 
 
-def get_queue_row(row_id: int) -> Optional[dict]:
+def get_queue_row(user_id: int, row_id: int) -> Optional[dict]:
+    """Returns the row only if it belongs to user_id; a row that exists but
+    belongs to someone else looks identical to a missing row to the caller."""
     with get_conn() as conn:
-        result = conn.execute(text("SELECT * FROM queue WHERE id = :id"), {"id": row_id})
+        result = conn.execute(
+            text("SELECT * FROM queue WHERE id = :id AND user_id = :user_id"),
+            {"id": row_id, "user_id": user_id},
+        )
         r = result.fetchone()
         return _deserialize(dict(r._mapping)) if r else None
 
 
-def update_queue_row(row_id: int, fields: dict[str, Any]) -> None:
+def update_queue_row(user_id: int, row_id: int, fields: dict[str, Any]) -> None:
+    """No-ops (rather than updating another user's row) if row_id doesn't
+    belong to user_id."""
     if not fields:
         return
     fields = dict(fields)
@@ -279,18 +449,25 @@ def update_queue_row(row_id: int, fields: dict[str, Any]) -> None:
     set_clause = ", ".join(f"{k} = :{k}" for k in fields)
     params = dict(fields)
     params["id"] = row_id
+    params["user_id"] = user_id
     with get_conn() as conn:
-        conn.execute(text(f"UPDATE queue SET {set_clause} WHERE id = :id"), params)
+        conn.execute(
+            text(f"UPDATE queue SET {set_clause} WHERE id = :id AND user_id = :user_id"),
+            params,
+        )
 
 
-def record_scrape_attempt(queue_id: int, company_url: Optional[str], candidates: list[str], success: bool) -> None:
+def record_scrape_attempt(
+    user_id: int, queue_id: int, company_url: Optional[str], candidates: list[str], success: bool
+) -> None:
     with get_conn() as conn:
         conn.execute(
             text(
-                "INSERT INTO scrape_attempts (queue_id, attempted_at, company_url, candidates, success) "
-                "VALUES (:queue_id, :attempted_at, :company_url, :candidates, :success)"
+                "INSERT INTO scrape_attempts (user_id, queue_id, attempted_at, company_url, candidates, success) "
+                "VALUES (:user_id, :queue_id, :attempted_at, :company_url, :candidates, :success)"
             ),
             {
+                "user_id": user_id,
                 "queue_id": queue_id,
                 "attempted_at": _now(),
                 "company_url": company_url,
@@ -300,38 +477,42 @@ def record_scrape_attempt(queue_id: int, company_url: Optional[str], candidates:
         )
 
 
-# --- Scheduler run tracking (replaces the old local state.json) ---
+# --- Scheduler run tracking, per user (replaces the old local state.json) ---
 
 
-def get_last_checked() -> Optional[str]:
-    """Returns the last_checked_date from the most recent successful run, or None."""
+def get_last_checked(user_id: int) -> Optional[str]:
+    """Returns the last_checked_date from this user's most recent successful run, or None."""
     with get_conn() as conn:
         result = conn.execute(
             text(
                 "SELECT last_checked_date FROM scheduler_state "
-                "WHERE status = 'success' AND last_checked_date IS NOT NULL "
+                "WHERE user_id = :user_id AND status = 'success' AND last_checked_date IS NOT NULL "
                 "ORDER BY run_started_at DESC LIMIT 1"
-            )
+            ),
+            {"user_id": user_id},
         )
         row = result.fetchone()
         return row[0] if row else None
 
 
-def start_run() -> int:
-    """Records the start of a fetch run. Returns the new run's id."""
+def start_run(user_id: int) -> int:
+    """Records the start of a fetch run for one user. Returns the new run's id."""
     ts = _now()
     with get_conn() as conn:
         if _is_postgres():
             result = conn.execute(
-                text("INSERT INTO scheduler_state (run_started_at, status) VALUES (:ts, 'running') RETURNING id"),
-                {"ts": ts},
+                text(
+                    "INSERT INTO scheduler_state (user_id, run_started_at, status) "
+                    "VALUES (:user_id, :ts, 'running') RETURNING id"
+                ),
+                {"user_id": user_id, "ts": ts},
             )
             conn.commit()
             return result.fetchone()[0]
 
         result = conn.execute(
-            text("INSERT INTO scheduler_state (run_started_at, status) VALUES (:ts, 'running')"),
-            {"ts": ts},
+            text("INSERT INTO scheduler_state (user_id, run_started_at, status) VALUES (:user_id, :ts, 'running')"),
+            {"user_id": user_id, "ts": ts},
         )
         conn.commit()
         return result.lastrowid
@@ -364,8 +545,11 @@ def finish_run(
         )
 
 
-def get_latest_run() -> Optional[dict]:
+def get_latest_run(user_id: int) -> Optional[dict]:
     with get_conn() as conn:
-        result = conn.execute(text("SELECT * FROM scheduler_state ORDER BY run_started_at DESC LIMIT 1"))
+        result = conn.execute(
+            text("SELECT * FROM scheduler_state WHERE user_id = :user_id ORDER BY run_started_at DESC LIMIT 1"),
+            {"user_id": user_id},
+        )
         row = result.fetchone()
         return dict(row._mapping) if row else None

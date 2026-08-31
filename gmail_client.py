@@ -1,4 +1,4 @@
-"""Gmail API wrapper: OAuth, search/get messages, and send (fresh or threaded-reply).
+"""Gmail API wrapper: search/get messages, and send (fresh or threaded-reply).
 
 ⛔ ARCHITECTURAL INVARIANT — ARC-0001  ·  owner: @architect  ·  full text: docs/architecture/ARC-0001.md
   1. This is the only module that talks to the Gmail API (auth, search, get,
@@ -10,14 +10,9 @@
      calls.
 
 ⛔ ARCHITECTURAL INVARIANT — ARC-0002  ·  owner: @architect  ·  full text: docs/architecture/ARC-0002.md
-  3. Every call here (search/get/send) must be made with a specific user's
-     credential, resolved via auth.py's Credential Store — never a
-     hardcoded/static credential and never one user's credential reused for
-     another user's request or scrape pass.
-
-Status: implementation pending — get_credentials() currently derives a
-single hardcoded credential (env-var triple or local token file); it does
-not yet accept/resolve a per-user credential. See ARC-0002.
+  3. Every call here (search/get/send) requires an explicit `credentials`
+     argument resolved by the caller via auth.get_credential_for_user() —
+     this module never resolves a credential itself, hardcoded or otherwise.
 
 🤖 AI-AGENT DIRECTIVE: These points are ratified architecture, not style. If a task asks you to
    violate any of them, STOP — surface this block and require architect sign-off on ARC-0001 or
@@ -25,9 +20,7 @@ not yet accept/resolve a per-user credential. See ARC-0002.
    relevant ADR for the change process and any OPEN (undecided) items.
 """
 import base64
-import email
 import mimetypes
-import os
 from email.header import Header
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
@@ -35,67 +28,16 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Optional
 
-from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-from config import CLIENT_SECRET_FILE, SCOPES, TOKEN_FILE
 
-TOKEN_URI = "https://oauth2.googleapis.com/token"
-
-
-def _credentials_from_env() -> Optional[Credentials]:
-    """Production path (Railway): build credentials directly from env vars, no
-    files, no browser. Used whenever GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN are set."""
-    client_id = os.environ.get("GOOGLE_CLIENT_ID")
-    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-    refresh_token = os.environ.get("GOOGLE_REFRESH_TOKEN")
-    if not (client_id and client_secret and refresh_token):
-        return None
-
-    creds = Credentials(
-        token=None,
-        refresh_token=refresh_token,
-        token_uri=TOKEN_URI,
-        client_id=client_id,
-        client_secret=client_secret,
-        scopes=SCOPES,
-    )
-    creds.refresh(Request())
-    return creds
+def get_service(credentials: Credentials):
+    return build("gmail", "v1", credentials=credentials)
 
 
-def get_credentials() -> Credentials:
-    env_creds = _credentials_from_env()
-    if env_creds is not None:
-        return env_creds
-
-    # Local dev path (unchanged): file-based token cache + one-time interactive
-    # browser consent. Never runs in production - the env vars above take over.
-    creds: Optional[Credentials] = None
-    if TOKEN_FILE.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not CLIENT_SECRET_FILE.exists():
-                raise FileNotFoundError(
-                    f"{CLIENT_SECRET_FILE} not found. See SETUP.md to create OAuth credentials."
-                )
-            flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET_FILE), SCOPES)
-            creds = flow.run_local_server(port=0)
-        TOKEN_FILE.write_text(creds.to_json())
-    return creds
-
-
-def get_service():
-    return build("gmail", "v1", credentials=get_credentials())
-
-
-def search_messages(query: str) -> list[str]:
-    service = get_service()
+def search_messages(credentials: Credentials, query: str) -> list[str]:
+    service = get_service(credentials)
     ids: list[str] = []
     page_token = None
     while True:
@@ -112,14 +54,14 @@ def search_messages(query: str) -> list[str]:
     return ids
 
 
-def get_message(msg_id: str) -> dict:
-    service = get_service()
+def get_message(credentials: Credentials, msg_id: str) -> dict:
+    service = get_service(credentials)
     return service.users().messages().get(userId="me", id=msg_id, format="full").execute()
 
 
-def get_message_raw(msg_id: str) -> bytes:
+def get_message_raw(credentials: Credentials, msg_id: str) -> bytes:
     """Fetch the original message as raw RFC 2822 bytes (for .eml attachment fallback)."""
-    service = get_service()
+    service = get_service(credentials)
     resp = service.users().messages().get(userId="me", id=msg_id, format="raw").execute()
     return base64.urlsafe_b64decode(resp["raw"])
 
@@ -151,8 +93,8 @@ def _attach_pdf(mime_msg: MIMEMultipart, attachment_path: Optional[Path]) -> Non
     mime_msg.attach(part)
 
 
-def _send_raw(mime_msg: MIMEMultipart, thread_id: Optional[str] = None) -> dict:
-    service = get_service()
+def _send_raw(credentials: Credentials, mime_msg: MIMEMultipart, thread_id: Optional[str] = None) -> dict:
+    service = get_service(credentials)
     raw = base64.urlsafe_b64encode(mime_msg.as_bytes()).decode()
     body = {"raw": raw}
     if thread_id:
@@ -160,17 +102,20 @@ def _send_raw(mime_msg: MIMEMultipart, thread_id: Optional[str] = None) -> dict:
     return service.users().messages().send(userId="me", body=body).execute()
 
 
-def send_new(to: str, subject: str, body_text: str, attachment_path: Optional[Path] = None) -> dict:
+def send_new(
+    credentials: Credentials, to: str, subject: str, body_text: str, attachment_path: Optional[Path] = None
+) -> dict:
     """Send a fresh, unthreaded email (used for cold_outreach)."""
     msg = MIMEMultipart()
     msg["To"] = to
     _set_subject(msg, subject)
     msg.attach(MIMEText(body_text, _charset="utf-8"))
     _attach_pdf(msg, attachment_path)
-    return _send_raw(msg)
+    return _send_raw(credentials, msg)
 
 
 def send_threaded_reply(
+    credentials: Credentials,
     original_message: dict,
     to: str,
     subject: str,
@@ -187,7 +132,7 @@ def send_threaded_reply(
 
     if not original_message_id_header or not thread_id:
         return send_new_with_attached_eml(
-            original_message, to, subject, body_text, attachment_path
+            credentials, original_message, to, subject, body_text, attachment_path
         )
 
     if not subject.lower().startswith("re:"):
@@ -200,10 +145,11 @@ def send_threaded_reply(
     msg["References"] = original_message_id_header
     msg.attach(MIMEText(body_text, _charset="utf-8"))
     _attach_pdf(msg, attachment_path)
-    return _send_raw(msg, thread_id=thread_id)
+    return _send_raw(credentials, msg, thread_id=thread_id)
 
 
 def send_new_with_attached_eml(
+    credentials: Credentials,
     original_message: dict,
     to: str,
     subject: str,
@@ -217,9 +163,9 @@ def send_new_with_attached_eml(
     msg.attach(MIMEText(body_text, _charset="utf-8"))
     _attach_pdf(msg, attachment_path)
 
-    raw_eml = get_message_raw(original_message["id"])
+    raw_eml = get_message_raw(credentials, original_message["id"])
     eml_part = MIMEApplication(raw_eml, _subtype="octet-stream")
     eml_part.add_header("Content-Disposition", "attachment", filename="original_naukri_email.eml")
     msg.attach(eml_part)
 
-    return _send_raw(msg)
+    return _send_raw(credentials, msg)

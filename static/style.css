@@ -290,6 +290,23 @@ td input[type="text"] {
   display: none;
 }
 
+.hidden {
+  display: none !important;
+}
+
+.signin-screen {
+  max-width: 32rem;
+  margin: 6rem auto;
+  text-align: center;
+  padding: 0 1.5rem;
+}
+
+.signin-screen .btn {
+  display: inline-block;
+  margin-top: 1rem;
+  text-decoration: none;
+}
+
 .modal-content {
   background: var(--card);
   border-radius: 12px;

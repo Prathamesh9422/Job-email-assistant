@@ -17,10 +17,6 @@ always via an explicit user action (Approve & Send button).
   5. The Sign-In Flow (auth.py) is the only way a user's identity enters
      this app — no bypassing it with a hardcoded/shared account.
 
-Status: implementation pending — this app is currently unauthenticated
-(no Session/Sign-In Flow); requests are not yet scoped to a user. See
-ARC-0002.
-
 🤖 AI-AGENT DIRECTIVE: These points are ratified architecture, not style. If a task asks you to
    violate any of them, STOP — surface this block and require architect sign-off on ARC-0001 or
    ARC-0002 as applicable.
@@ -31,11 +27,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
+import auth
 import db
 import excel_tracker
 import fetch_job
@@ -43,6 +41,7 @@ import gmail_client
 import scraper
 from config import (
     RESUMES_DIR,
+    SESSION_SECRET_KEY,
     STATIC_DIR,
     TRACKER_FILE,
     STATUS_FAILED,
@@ -65,6 +64,7 @@ NEXT_RUN_HOUR_UTC = 14
 NEXT_RUN_MINUTE_UTC = 30
 
 app = FastAPI()
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY)
 
 RESUMES_DIR.mkdir(parents=True, exist_ok=True)
 TRACKER_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -127,6 +127,30 @@ def health():
     return {"ok": True}
 
 
+# --- Sign in with Google (ARC-0002) ---
+
+
+@app.get("/auth/login")
+def auth_login(request: Request):
+    return auth.start_sign_in(request)
+
+
+@app.get("/auth/callback", name="auth_callback")
+def auth_callback(request: Request):
+    return auth.handle_callback(request)
+
+
+@app.post("/auth/logout")
+def auth_logout(request: Request):
+    auth.logout(request)
+    return RedirectResponse("/")
+
+
+@app.get("/api/me")
+def api_me(current_user: dict = Depends(auth.require_user)):
+    return {"id": current_user["id"], "email": current_user["email"]}
+
+
 def _next_expected_run_utc() -> str:
     now = datetime.now(timezone.utc)
     target = now.replace(hour=NEXT_RUN_HOUR_UTC, minute=NEXT_RUN_MINUTE_UTC, second=0, microsecond=0)
@@ -136,8 +160,8 @@ def _next_expected_run_utc() -> str:
 
 
 @app.get("/api/scheduler/status")
-def scheduler_status():
-    latest = db.get_latest_run()
+def scheduler_status(current_user: dict = Depends(auth.require_user)):
+    latest = db.get_latest_run(current_user["id"])
     return {
         "last_run_at": latest.get("run_started_at") if latest else None,
         "last_run_finished_at": latest.get("run_finished_at") if latest else None,
@@ -150,27 +174,28 @@ def scheduler_status():
 
 
 @app.post("/api/scheduler/run-now")
-def scheduler_run_now():
+def scheduler_run_now(current_user: dict = Depends(auth.require_user)):
     """Manual trigger for testing - runs the exact same triage logic as the
-    scheduled cron job. Never sends email (fetch_job.run_fetch has no send code path)."""
-    return fetch_job.run_fetch()
+    scheduled cron job, scoped to the signed-in user only. Never sends email
+    (fetch_job.run_fetch_for_user has no send code path)."""
+    return fetch_job.run_fetch_for_user(current_user)
 
 
 @app.get("/api/resume")
-def get_resume():
+def get_resume(current_user: dict = Depends(auth.require_user)):
     resume = latest_resume()
     return {"resume_filename": resume.name if resume else None}
 
 
 @app.get("/api/queue")
-def api_list_queue(status: Optional[str] = None):
+def api_list_queue(status: Optional[str] = None, current_user: dict = Depends(auth.require_user)):
     statuses = status.split(",") if status else [STATUS_NEEDS_INFO, STATUS_READY]
-    return db.list_queue(statuses)
+    return db.list_queue(current_user["id"], statuses)
 
 
 @app.get("/api/queue/{row_id}")
-def api_get_queue_row(row_id: int):
-    row = db.get_queue_row(row_id)
+def api_get_queue_row(row_id: int, current_user: dict = Depends(auth.require_user)):
+    row = db.get_queue_row(current_user["id"], row_id)
     if not row:
         raise HTTPException(404, "not found")
     return row
@@ -183,8 +208,8 @@ class PatchBody(BaseModel):
 
 
 @app.patch("/api/queue/{row_id}")
-def api_patch_queue_row(row_id: int, body: PatchBody):
-    row = db.get_queue_row(row_id)
+def api_patch_queue_row(row_id: int, body: PatchBody, current_user: dict = Depends(auth.require_user)):
+    row = db.get_queue_row(current_user["id"], row_id)
     if not row:
         raise HTTPException(404, "not found")
     fields = {}
@@ -196,23 +221,24 @@ def api_patch_queue_row(row_id: int, body: PatchBody):
         fields["hr_name"] = body.hr_name
     if body.template_used is not None:
         fields["template_used"] = body.template_used
-    db.update_queue_row(row_id, fields)
-    return db.get_queue_row(row_id)
+    db.update_queue_row(current_user["id"], row_id, fields)
+    return db.get_queue_row(current_user["id"], row_id)
 
 
 @app.post("/api/queue/{row_id}/scrape")
-def api_scrape(row_id: int):
-    row = db.get_queue_row(row_id)
+def api_scrape(row_id: int, current_user: dict = Depends(auth.require_user)):
+    row = db.get_queue_row(current_user["id"], row_id)
     if not row:
         raise HTTPException(404, "not found")
     if not row.get("company"):
         raise HTTPException(400, "no company name on this row to scrape for")
 
     candidates = scraper.scrape_company_emails(row["company"])
-    db.record_scrape_attempt(row_id, None, candidates, success=bool(candidates))
+    db.record_scrape_attempt(current_user["id"], row_id, None, candidates, success=bool(candidates))
 
     if candidates:
         db.update_queue_row(
+            current_user["id"],
             row_id,
             {
                 "hr_email": candidates[0],
@@ -220,7 +246,7 @@ def api_scrape(row_id: int):
                 "hr_email_confidence": "low",
             },
         )
-    return {"candidates": candidates, "row": db.get_queue_row(row_id)}
+    return {"candidates": candidates, "row": db.get_queue_row(current_user["id"], row_id)}
 
 
 class PreviewBody(BaseModel):
@@ -228,8 +254,8 @@ class PreviewBody(BaseModel):
 
 
 @app.post("/api/queue/{row_id}/preview")
-def api_preview(row_id: int, body: PreviewBody):
-    row = db.get_queue_row(row_id)
+def api_preview(row_id: int, body: PreviewBody, current_user: dict = Depends(auth.require_user)):
+    row = db.get_queue_row(current_user["id"], row_id)
     if not row:
         raise HTTPException(404, "not found")
     if body.template not in VALID_TEMPLATES:
@@ -239,8 +265,8 @@ def api_preview(row_id: int, body: PreviewBody):
 
 
 @app.get("/api/queue/{row_id}/final")
-def api_get_final(row_id: int):
-    row = db.get_queue_row(row_id)
+def api_get_final(row_id: int, current_user: dict = Depends(auth.require_user)):
+    row = db.get_queue_row(current_user["id"], row_id)
     if not row:
         raise HTTPException(404, "not found")
     if not row.get("final_body"):
@@ -254,23 +280,24 @@ class FinalizeBody(BaseModel):
 
 
 @app.post("/api/queue/{row_id}/finalize")
-def api_finalize(row_id: int, body: FinalizeBody):
-    row = db.get_queue_row(row_id)
+def api_finalize(row_id: int, body: FinalizeBody, current_user: dict = Depends(auth.require_user)):
+    row = db.get_queue_row(current_user["id"], row_id)
     if not row:
         raise HTTPException(404, "not found")
-    db.update_queue_row(row_id, {"final_subject": body.subject, "final_body": body.body})
-    return db.get_queue_row(row_id)
+    db.update_queue_row(current_user["id"], row_id, {"final_subject": body.subject, "final_body": body.body})
+    return db.get_queue_row(current_user["id"], row_id)
 
 
 @app.post("/api/queue/{row_id}/send")
-def api_send(row_id: int):
-    row = db.get_queue_row(row_id)
+def api_send(row_id: int, current_user: dict = Depends(auth.require_user)):
+    row = db.get_queue_row(current_user["id"], row_id)
     if not row:
         raise HTTPException(404, "not found")
     if not row.get("hr_email"):
         raise HTTPException(400, "no hr_email set on this row")
     template_used = row.get("template_used") or TEMPLATE_REPLY_TO_NAUKRI
 
+    credentials = auth.get_credential_for_user(current_user["id"])
     resume = latest_resume()
     if row.get("final_body"):
         rendered = {"subject": row.get("final_subject") or "", "body": row["final_body"]}
@@ -280,8 +307,9 @@ def api_send(row_id: int):
 
     try:
         if template_used == TEMPLATE_REPLY_TO_NAUKRI:
-            original_message = gmail_client.get_message(row["gmail_message_id"])
+            original_message = gmail_client.get_message(credentials, row["gmail_message_id"])
             result = gmail_client.send_threaded_reply(
+                credentials,
                 original_message,
                 to=row["hr_email"],
                 subject=rendered["subject"],
@@ -290,19 +318,21 @@ def api_send(row_id: int):
             )
         else:
             result = gmail_client.send_new(
+                credentials,
                 to=row["hr_email"],
                 subject=rendered["subject"],
                 body_text=rendered["body"],
                 attachment_path=resume,
             )
     except Exception as e:
-        db.update_queue_row(row_id, {"status": STATUS_FAILED, "error_message": str(e)})
-        excel_tracker.upsert_tracker_row(db.get_queue_row(row_id))
+        db.update_queue_row(current_user["id"], row_id, {"status": STATUS_FAILED, "error_message": str(e)})
+        excel_tracker.upsert_tracker_row(db.get_queue_row(current_user["id"], row_id))
         raise HTTPException(500, f"send failed: {e}")
 
     from datetime import datetime, timezone
 
     db.update_queue_row(
+        current_user["id"],
         row_id,
         {
             "status": STATUS_SENT,
@@ -311,18 +341,18 @@ def api_send(row_id: int):
             "template_used": template_used,
         },
     )
-    updated_row = db.get_queue_row(row_id)
+    updated_row = db.get_queue_row(current_user["id"], row_id)
     excel_tracker.upsert_tracker_row(updated_row)
     return {"result": result, "row": updated_row}
 
 
 @app.post("/api/queue/{row_id}/skip")
-def api_skip(row_id: int):
-    row = db.get_queue_row(row_id)
+def api_skip(row_id: int, current_user: dict = Depends(auth.require_user)):
+    row = db.get_queue_row(current_user["id"], row_id)
     if not row:
         raise HTTPException(404, "not found")
-    db.update_queue_row(row_id, {"status": STATUS_SKIPPED})
-    updated_row = db.get_queue_row(row_id)
+    db.update_queue_row(current_user["id"], row_id, {"status": STATUS_SKIPPED})
+    updated_row = db.get_queue_row(current_user["id"], row_id)
     excel_tracker.upsert_tracker_row(updated_row)
     return updated_row
 

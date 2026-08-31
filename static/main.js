@@ -1,3 +1,8 @@
+const signinScreen = document.getElementById("signin-screen");
+const appShell = document.getElementById("app-shell");
+const accountChip = document.getElementById("account-chip");
+const signoutBtn = document.getElementById("signout-btn");
+
 const tbody = document.getElementById("queue-body");
 const digestBody = document.getElementById("digest-body");
 const resumeIndicator = document.getElementById("resume-indicator");
@@ -331,7 +336,27 @@ refreshBtn.addEventListener("click", () => {
   loadSchedulerStatus();
 });
 
-loadResume();
-loadQueue();
-loadDigests();
-loadSchedulerStatus();
+signoutBtn.addEventListener("click", async () => {
+  await fetch("/auth/logout", { method: "POST" });
+  window.location.reload();
+});
+
+async function checkAuthAndInit() {
+  const res = await fetch("/api/me");
+  if (res.status === 401) {
+    signinScreen.classList.remove("hidden");
+    appShell.classList.add("hidden");
+    return;
+  }
+  const me = await res.json();
+  accountChip.textContent = `Signed in as ${me.email}`;
+  signinScreen.classList.add("hidden");
+  appShell.classList.remove("hidden");
+
+  loadResume();
+  loadQueue();
+  loadDigests();
+  loadSchedulerStatus();
+}
+
+checkAuthAndInit();

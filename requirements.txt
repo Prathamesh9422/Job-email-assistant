@@ -10,3 +10,5 @@ jinja2
 python-dateutil
 sqlalchemy
 psycopg2-binary
+itsdangerous
+cryptography
