@@ -13,8 +13,13 @@ Callable two ways:
      gmail_client.send_new / send_threaded_reply / send_new_with_attached_eml,
      directly or transitively. Sending only happens from app.py's
      human-triggered Approve & Send handler.
-  2. This module is parse-only: search/get + naukri_parser + db writes.
-     No enrichment (scraper.py), rendering (templates_engine.py), or sending.
+  2. This module is parse+classify-only: classify (email_classifier.py),
+     parse (naukri_parser.py), and write/update rows via db.py. No
+     enrichment (scraper.py), rendering (templates_engine.py), or sending —
+     regardless of message type (application_notification / hr_reply /
+     candidate_digest).
+  3. Status changes go through lifecycle.py's transition table, never a
+     status string written directly here.
 
 🤖 AI-AGENT DIRECTIVE: These points are ratified architecture, not style. If a task asks you to
    violate any of them, STOP — surface this block and require architect sign-off on ARC-0001.

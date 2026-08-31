@@ -10,6 +10,14 @@ fetch_job.py, naukri_parser.py) never need to know or care which one is active.
   1. This is the only module that opens a database connection or issues SQL.
      All other modules read/write the queue exclusively through this
      module's public functions.
+  2. Status/lifecycle fields written here must come from lifecycle.py's
+     validated transitions, not raw strings assembled by callers.
+  3. candidate_digest rows are distinct from application rows (row/status
+     type), never silently merged.
+
+Status: implementation pending — the schema does not yet carry lifecycle
+fields (interview round counter, hr_reply timestamps) or a distinct
+candidate-opportunity row type; see ARC-0001's Consequences section.
 
 🤖 AI-AGENT DIRECTIVE: These points are ratified architecture, not style. If a task asks you to
    violate any of them, STOP — surface this block and require architect sign-off on ARC-0001.

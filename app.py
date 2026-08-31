@@ -7,6 +7,8 @@ always via an explicit user action (Approve & Send button).
      dashboard's Approve & Send action) — never on a schedule or automatically.
   2. All Gmail API access goes through gmail_client.py; all persistence goes
      through db.py. Don't build credentials or SQL here.
+  3. Enriching a candidate_digest row (scraper.py) and applying to it is a
+     human-triggered action here, same as sending — never automatic.
 
 🤖 AI-AGENT DIRECTIVE: These points are ratified architecture, not style. If a task asks you to
    violate any of them, STOP — surface this block and require architect sign-off on ARC-0001.
