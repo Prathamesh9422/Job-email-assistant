@@ -12,3 +12,4 @@ sqlalchemy
 psycopg2-binary
 itsdangerous
 cryptography
+python-dotenv

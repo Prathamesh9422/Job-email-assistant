@@ -20,7 +20,13 @@ import base64
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent
+
+# Local dev convenience only: loads .env (gitignored) if present. Railway
+# injects real env vars directly, so this is a no-op in production.
+load_dotenv(BASE_DIR / ".env")
 SECRET_DIR = BASE_DIR / "secret"
 
 # DATA_DIR is where mutable/runtime data lives: locally this is the repo root

@@ -62,17 +62,20 @@ def start_sign_in(request: Request) -> RedirectResponse:
         state=state,
     )
     request.session["oauth_state"] = state
+    request.session["oauth_code_verifier"] = flow.code_verifier
     return RedirectResponse(authorization_url)
 
 
 def handle_callback(request: Request) -> RedirectResponse:
     expected_state = request.session.pop("oauth_state", None)
+    code_verifier = request.session.pop("oauth_code_verifier", None)
     got_state = request.query_params.get("state")
-    if not expected_state or expected_state != got_state:
+    if not expected_state or expected_state != got_state or not code_verifier:
         raise HTTPException(400, "invalid OAuth state")
 
     redirect_uri = _redirect_uri(request)
     flow = Flow.from_client_config(_client_config(redirect_uri), scopes=SCOPES, redirect_uri=redirect_uri)
+    flow.code_verifier = code_verifier
     flow.fetch_token(authorization_response=str(request.url))
     credentials = flow.credentials
 
