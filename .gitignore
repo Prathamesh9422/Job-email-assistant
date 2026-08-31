@@ -11,3 +11,6 @@ __pycache__/
 venv/
 .env
 node_modules/
+.claude/skills/arc-decision/SKILL.md
+.claude/skills/arc-review/SKILL.md
+.claude/skills/arc-visualise/SKILL.md
