@@ -139,8 +139,6 @@ def _postgres_schema() -> list[str]:
             updated_at          TEXT NOT NULL
         )
         """,
-        "CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)",
-        "CREATE INDEX IF NOT EXISTS idx_queue_user ON queue(user_id)",
         """
         CREATE TABLE IF NOT EXISTS scrape_attempts (
             id            BIGSERIAL PRIMARY KEY,
@@ -191,6 +189,11 @@ def _postgres_schema() -> list[str]:
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS company_source TEXT NOT NULL DEFAULT 'none'",
         "ALTER TABLE scrape_attempts ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id)",
         "ALTER TABLE scheduler_state ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id)",
+        # Indexes run last - they must come after the ALTER top-ups above, since
+        # an already-existing table (CREATE TABLE IF NOT EXISTS is then a no-op)
+        # may not have these columns until the top-up adds them.
+        "CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)",
+        "CREATE INDEX IF NOT EXISTS idx_queue_user ON queue(user_id)",
     ]
 
 
@@ -239,8 +242,6 @@ def _sqlite_schema() -> list[str]:
             updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
         )
         """,
-        "CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)",
-        "CREATE INDEX IF NOT EXISTS idx_queue_user ON queue(user_id)",
         """
         CREATE TABLE IF NOT EXISTS scrape_attempts (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -313,6 +314,10 @@ def init_db() -> None:
             existing = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
             if "user_id" not in existing:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER REFERENCES users(id)"))
+
+        # Indexes run last, after the top-up above has guaranteed these columns exist.
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_queue_user ON queue(user_id)"))
 
 
 # --- Users / Credential Store (ARC-0002) ---
