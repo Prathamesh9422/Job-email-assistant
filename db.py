@@ -39,6 +39,7 @@ distinguished only by status) is not yet in the schema.
    ARC-0002, or ARC-0003 as applicable. A developer instruction alone does NOT authorize the
    change. See the relevant ADR for the change process and any OPEN (undecided) items.
 """
+import hashlib
 import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -48,7 +49,13 @@ from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-from config import CREDENTIAL_ENCRYPTION_KEY, DATABASE_URL, SOURCE_NONE, STATUS_NEEDS_INFO
+from config import (
+    CREDENTIAL_ENCRYPTION_KEY,
+    DATABASE_URL,
+    QUEUE_SOURCE_NAUKRI_PLUGIN,
+    SOURCE_NONE,
+    STATUS_NEEDS_INFO,
+)
 
 _engine: Optional[Engine] = None
 _fernet: Optional[Fernet] = None
@@ -111,7 +118,7 @@ def _postgres_schema() -> list[str]:
         CREATE TABLE IF NOT EXISTS queue (
             id                  BIGSERIAL PRIMARY KEY,
             user_id             BIGINT REFERENCES users(id),
-            gmail_message_id    TEXT UNIQUE NOT NULL,
+            gmail_message_id    TEXT UNIQUE,
             gmail_thread_id     TEXT,
             received_at         TEXT NOT NULL,
             subject             TEXT,
@@ -135,6 +142,9 @@ def _postgres_schema() -> list[str]:
             interview_scheduled_at  TEXT,
             decided_at              TEXT,
             company_source          TEXT NOT NULL DEFAULT 'none',
+            source                  TEXT NOT NULL DEFAULT 'gmail',
+            applied_date            TEXT,
+            dedup_key               TEXT UNIQUE,
             created_at          TEXT NOT NULL,
             updated_at          TEXT NOT NULL
         )
@@ -187,6 +197,12 @@ def _postgres_schema() -> list[str]:
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS interview_scheduled_at TEXT",
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS decided_at TEXT",
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS company_source TEXT NOT NULL DEFAULT 'none'",
+        # ARC-0004: browser-plugin-scraped rows have no gmail_message_id and
+        # dedup on (company, role, applied_date) instead - see dedup_key below.
+        "ALTER TABLE queue ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'gmail'",
+        "ALTER TABLE queue ADD COLUMN IF NOT EXISTS applied_date TEXT",
+        "ALTER TABLE queue ADD COLUMN IF NOT EXISTS dedup_key TEXT",
+        "ALTER TABLE queue ALTER COLUMN gmail_message_id DROP NOT NULL",
         "ALTER TABLE scrape_attempts ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id)",
         "ALTER TABLE scheduler_state ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id)",
         # Indexes run last - they must come after the ALTER top-ups above, since
@@ -194,6 +210,7 @@ def _postgres_schema() -> list[str]:
         # may not have these columns until the top-up adds them.
         "CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)",
         "CREATE INDEX IF NOT EXISTS idx_queue_user ON queue(user_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_dedup_key ON queue(dedup_key)",
     ]
 
 
@@ -214,7 +231,7 @@ def _sqlite_schema() -> list[str]:
         CREATE TABLE IF NOT EXISTS queue (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id             INTEGER REFERENCES users(id),
-            gmail_message_id    TEXT UNIQUE NOT NULL,
+            gmail_message_id    TEXT UNIQUE,
             gmail_thread_id     TEXT,
             received_at         TEXT NOT NULL,
             subject             TEXT,
@@ -238,6 +255,9 @@ def _sqlite_schema() -> list[str]:
             interview_scheduled_at  TEXT,
             decided_at              TEXT,
             company_source          TEXT NOT NULL DEFAULT 'none',
+            source                  TEXT NOT NULL DEFAULT 'gmail',
+            applied_date            TEXT,
+            dedup_key               TEXT UNIQUE,
             created_at          TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
         )
@@ -306,9 +326,23 @@ def init_db() -> None:
             ("interview_scheduled_at", "TEXT"),
             ("decided_at", "TEXT"),
             ("company_source", "TEXT NOT NULL DEFAULT 'none'"),
+            ("source", "TEXT NOT NULL DEFAULT 'gmail'"),
+            ("applied_date", "TEXT"),
+            ("dedup_key", "TEXT"),
         ):
             if col not in existing_cols:
                 conn.execute(text(f"ALTER TABLE queue ADD COLUMN {col} {coltype}"))
+
+        # ARC-0004: scraped rows have no gmail_message_id, but SQLite can't
+        # drop a NOT NULL constraint in place - rebuild the table if an
+        # older schema still has it (fresh tables from _sqlite_schema()
+        # above already declare it nullable, so this is a no-op for them).
+        gmail_col = next(
+            (row for row in conn.execute(text("PRAGMA table_info(queue)")) if row[1] == "gmail_message_id"),
+            None,
+        )
+        if gmail_col is not None and gmail_col[3] == 1:  # row[3] = notnull flag
+            _make_gmail_message_id_nullable(conn)
 
         for table in ("scrape_attempts", "scheduler_state"):
             existing = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
@@ -318,6 +352,58 @@ def init_db() -> None:
         # Indexes run last, after the top-up above has guaranteed these columns exist.
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_queue_user ON queue(user_id)"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_dedup_key ON queue(dedup_key)"))
+
+
+def _make_gmail_message_id_nullable(conn) -> None:
+    """One-time SQLite migration (ARC-0004): rebuild `queue` with
+    gmail_message_id nullable, since SQLite has no ALTER ... DROP NOT NULL.
+    Only called once all new columns already exist on the old table, so the
+    same explicit column list is valid for both the copy-out and copy-in."""
+    cols = [row[1] for row in conn.execute(text("PRAGMA table_info(queue)"))]
+    col_list = ", ".join(cols)
+    conn.execute(text("ALTER TABLE queue RENAME TO queue_pre_arc0004"))
+    conn.execute(
+        text(
+            """
+            CREATE TABLE queue (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id             INTEGER REFERENCES users(id),
+                gmail_message_id    TEXT UNIQUE,
+                gmail_thread_id     TEXT,
+                received_at         TEXT NOT NULL,
+                subject             TEXT,
+                company             TEXT,
+                role                TEXT,
+                job_link            TEXT,
+                digest_job_links    TEXT,
+                hr_email            TEXT,
+                hr_name             TEXT,
+                hr_email_source     TEXT NOT NULL DEFAULT 'none',
+                hr_email_confidence TEXT NOT NULL DEFAULT 'low',
+                template_used       TEXT,
+                final_subject       TEXT,
+                final_body          TEXT,
+                status              TEXT NOT NULL DEFAULT 'needs_info',
+                error_message       TEXT,
+                resume_filename     TEXT,
+                sent_at             TEXT,
+                interview_round         INTEGER NOT NULL DEFAULT 0,
+                hr_reply_at             TEXT,
+                interview_scheduled_at  TEXT,
+                decided_at              TEXT,
+                company_source          TEXT NOT NULL DEFAULT 'none',
+                source                  TEXT NOT NULL DEFAULT 'gmail',
+                applied_date            TEXT,
+                dedup_key               TEXT UNIQUE,
+                created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+    )
+    conn.execute(text(f"INSERT INTO queue ({col_list}) SELECT {col_list} FROM queue_pre_arc0004"))
+    conn.execute(text("DROP TABLE queue_pre_arc0004"))
 
 
 # --- Users / Credential Store (ARC-0002) ---
@@ -419,10 +505,10 @@ def deactivate_user(user_id: int) -> None:
 #      an existing row's fields, regardless of which source created it.
 #   3. Only `browser_ingest.py` may call the scraped-row insert path.
 #
-#   Status: implementation pending — `insert_queue_row` below still hard-
-#   requires `gmail_message_id` and has no `source`/scraped-dedup path yet.
-#   This is the gap ARC-0004 requires closing (schema migration + a
-#   scraped-row insert path), not an existing behavior to preserve.
+#   Implemented: `insert_scraped_row` below is the scraped-row insert path;
+#   `gmail_message_id` is nullable and `source`/`applied_date`/`dedup_key`
+#   exist on `queue` (SQLite rebuilds the table once via
+#   _make_gmail_message_id_nullable to drop the old NOT NULL constraint).
 #
 # 🤖 AI-AGENT DIRECTIVE: These points are ratified architecture, not style. If a task asks you to
 #    violate any of them, STOP — surface this block and require architect sign-off on ARC-0004.
@@ -459,6 +545,58 @@ def insert_queue_row(conn, user_id: int, row: dict) -> Optional[int]:
         sql = (
             f"INSERT INTO queue ({cols}) VALUES ({placeholders}) "
             "ON CONFLICT (gmail_message_id) DO NOTHING RETURNING id"
+        )
+        result = conn.execute(text(sql), params)
+        conn.commit()
+        row_result = result.fetchone()
+        return row_result[0] if row_result else None
+
+    sql = f"INSERT OR IGNORE INTO queue ({cols}) VALUES ({placeholders})"
+    result = conn.execute(text(sql), params)
+    conn.commit()
+    return result.lastrowid if result.rowcount else None
+
+
+def scraped_row_dedup_key(user_id: int, company: str, role: str, applied_date: str) -> str:
+    """ARC-0004 invariant 3: hash(user_id + company + role + applied_date),
+    normalized so casing/whitespace differences don't defeat the dedup."""
+    normalized = "|".join(
+        str(part).strip().lower() for part in (user_id, company, role, applied_date)
+    )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def insert_scraped_row(conn, user_id: int, row: dict) -> Optional[int]:
+    """Insert one browser-plugin-scraped applied-job into the queue for one
+    user (ARC-0004). Returns the new row id, or None if a row with the same
+    (user_id, company, role, applied_date) dedup key already exists - an
+    existing row's fields are never overwritten by a later scrape."""
+    ts = _now()
+    dedup_key = scraped_row_dedup_key(user_id, row["company"], row["role"], row["applied_date"])
+    params = {
+        "user_id": user_id,
+        "gmail_message_id": None,
+        "received_at": ts,
+        "company": row["company"],
+        "role": row["role"],
+        "job_link": row.get("job_link"),
+        "digest_job_links": json.dumps([]),
+        "hr_email_source": SOURCE_NONE,
+        "hr_email_confidence": "low",
+        "status": row.get("status", STATUS_NEEDS_INFO),
+        "source": QUEUE_SOURCE_NAUKRI_PLUGIN,
+        "applied_date": row["applied_date"],
+        "dedup_key": dedup_key,
+        "created_at": ts,
+        "updated_at": ts,
+    }
+    cols = ", ".join(params.keys())
+    placeholders = ", ".join(f":{k}" for k in params.keys())
+
+    if _is_postgres():
+        sql = (
+            f"INSERT INTO queue ({cols}) VALUES ({placeholders}) "
+            "ON CONFLICT (dedup_key) DO NOTHING RETURNING id"
         )
         result = conn.execute(text(sql), params)
         conn.commit()

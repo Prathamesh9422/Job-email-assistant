@@ -130,6 +130,11 @@ SOURCE_SCRAPED = "scraped"
 SOURCE_MANUAL = "manual"
 SOURCE_NONE = "none"
 
+# queue.source values (ARC-0004) - which Ingestion Path created this row.
+# Distinct vocabulary from hr_email_source (SOURCE_* above); do not conflate.
+QUEUE_SOURCE_GMAIL = "gmail"
+QUEUE_SOURCE_NAUKRI_PLUGIN = "naukri_plugin"
+
 TEMPLATE_REPLY_TO_NAUKRI = "reply_to_naukri"
 TEMPLATE_COLD_OUTREACH = "cold_outreach"
 TEMPLATE_COVER_LETTER = "cover_letter"

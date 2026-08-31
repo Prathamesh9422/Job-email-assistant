@@ -46,6 +46,7 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 import auth
+import browser_ingest
 import db
 import excel_tracker
 import fetch_job
@@ -408,6 +409,28 @@ def api_skip(row_id: int, current_user: dict = Depends(auth.require_user)):
     updated_row = db.get_queue_row(current_user["id"], row_id)
     excel_tracker.upsert_tracker_row(updated_row)
     return updated_row
+
+
+# --- Browser-plugin applied-job ingestion (ARC-0004) ---
+
+
+class ScrapedJobPayload(BaseModel):
+    company: str
+    role: str
+    applied_date: str
+    job_link: Optional[str] = None
+
+
+class ScrapedJobsBody(BaseModel):
+    jobs: list[ScrapedJobPayload]
+
+
+@app.post("/api/queue/ingest-scraped")
+def api_ingest_scraped(body: ScrapedJobsBody, current_user: dict = Depends(auth.require_user)):
+    """Thin pass-through to browser_ingest.py (ARC-0004 invariant 1) - the
+    browser plugin calls this, authenticated by the same session cookie as
+    the dashboard, with the applied-jobs it scraped from the job site."""
+    return browser_ingest.ingest_scraped_jobs(current_user["id"], [j.model_dump() for j in body.jobs])
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
