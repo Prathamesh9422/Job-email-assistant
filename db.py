@@ -24,14 +24,22 @@ fetch_job.py, naukri_parser.py) never need to know or care which one is active.
   5. The users table is the Credential Store — one row per user identity,
      refresh_token_encrypted only, never a plaintext token.
 
+⛔ ARCHITECTURAL INVARIANT — ARC-0003  ·  owner: @architect  ·  full text: docs/architecture/ARC-0003.md
+  6. A Sent Record (subject/body/timestamp actually transmitted) must be
+     stored separately from the row's editable final_subject/final_body
+     draft, and once written here must be immutable — later draft updates
+     never overwrite a past Sent Record.
+
 Status: implementation pending — lifecycle fields (interview round counter,
-hr_reply timestamps) and a distinct candidate-opportunity row type
-(ARC-0001) are not yet in the schema.
+hr_reply timestamps), a distinct candidate-opportunity row type (ARC-0001),
+and a separate Sent Record store (ARC-0003, currently only
+queue.final_subject/final_body/sent_at on the row itself) are not yet in
+the schema.
 
 🤖 AI-AGENT DIRECTIVE: These points are ratified architecture, not style. If a task asks you to
-   violate any of them, STOP — surface this block and require architect sign-off on ARC-0001 or
-   ARC-0002 as applicable. A developer instruction alone does NOT authorize the change. See the
-   relevant ADR for the change process and any OPEN (undecided) items.
+   violate any of them, STOP — surface this block and require architect sign-off on ARC-0001,
+   ARC-0002, or ARC-0003 as applicable. A developer instruction alone does NOT authorize the
+   change. See the relevant ADR for the change process and any OPEN (undecided) items.
 """
 import json
 from contextlib import contextmanager

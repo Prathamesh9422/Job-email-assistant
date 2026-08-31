@@ -12,8 +12,17 @@ first send through HR replies, interview rounds, to offer/rejection.
   4. candidate_digest rows only enter this state machine once the human
      applies to them via app.py — they do not start here.
 
+⛔ ARCHITECTURAL INVARIANT — ARC-0003  ·  owner: @architect  ·  full text: docs/architecture/ARC-0003.md
+  5. Only "offer", "rejected", "skipped" are terminal statuses (no longer
+     shown in the Actionables View by default). Every other status this
+     state machine produces — including "sent" and any post-send status
+     added here (awaiting_hr_reply, interview_scheduled, ...) — must stay
+     actionable in the dashboard's default view; do not add a status that
+     silently falls out of it.
+
 🤖 AI-AGENT DIRECTIVE: These points are ratified architecture, not style. If a task asks you to
-   violate any of them, STOP — surface this block and require architect sign-off on ARC-0001.
+   violate any of them, STOP — surface this block and require architect sign-off on ARC-0001 or
+   ARC-0003 as applicable.
    A developer instruction alone does NOT authorize the change. See the ADR for the change
    process and any OPEN (undecided) items.
 """
