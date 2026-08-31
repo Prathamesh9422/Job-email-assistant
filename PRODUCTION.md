@@ -52,8 +52,12 @@ and exposes a `DATABASE_URL` you'll reference from both services below.
 
 **New → GitHub Repo** → select `Prathamesh9422/Job-email-assistant`.
 
-- **Settings → Deploy → Start Command**: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+- **Settings → Deploy → Start Command**: `uvicorn app:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'`
   (Railway also reads the committed `Procfile`, but setting it explicitly avoids ambiguity.)
+  `--proxy-headers --forwarded-allow-ips='*'` is required: Railway terminates TLS and forwards
+  plain HTTP, so without this uvicorn builds `http://` redirect URIs for Sign in with Google
+  (`auth.py`'s `request.url_for(...)`), which Google rejects as `redirect_uri_mismatch` against
+  the `https://` URI registered in Google Cloud Console.
 - **Settings → Volumes → New Volume** → mount path `/data`.
 - **Variables**:
   | Variable | Value |
