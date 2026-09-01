@@ -15,3 +15,5 @@ node_modules/
 .claude/skills/arc-review/SKILL.md
 .claude/skills/arc-visualise/SKILL.md
 queue.db.runcheck
+
+*.log
