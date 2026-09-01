@@ -44,7 +44,10 @@ def _normalize_database_url(url: str) -> str:
 
 
 DB_FILE = BASE_DIR / "queue.db"
-TRACKER_FILE = DATA_DIR / "tracker.xlsx"
+# Per-user tracker files (ARC-0002's previously-open question, resolved here):
+# one tracker.xlsx per user under TRACKER_DIR, never one shared file - mirrors
+# the same per-user-subfolder pattern used for RESUMES_DIR below.
+TRACKER_DIR = DATA_DIR / "trackers"
 RESUMES_DIR = DATA_DIR / "resumes"
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"

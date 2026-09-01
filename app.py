@@ -39,7 +39,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -57,7 +57,7 @@ from config import (
     RESUMES_DIR,
     SESSION_SECRET_KEY,
     STATIC_DIR,
-    TRACKER_FILE,
+    TRACKER_DIR,
     ACTIONABLE_STATUSES,
     STATUS_FAILED,
     STATUS_NEEDS_INFO,
@@ -79,15 +79,27 @@ NEXT_RUN_HOUR_UTC = 14
 NEXT_RUN_MINUTE_UTC = 30
 
 app = FastAPI()
-app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET_KEY,
+    https_only=True,
+    same_site="lax",
+)
 
 RESUMES_DIR.mkdir(parents=True, exist_ok=True)
-TRACKER_FILE.parent.mkdir(parents=True, exist_ok=True)
+TRACKER_DIR.mkdir(parents=True, exist_ok=True)
 db.init_db()
 
 
-def latest_resume() -> Optional[Path]:
-    pdfs = list(RESUMES_DIR.glob("*.pdf"))
+def _user_resume_dir(user_id: int) -> Path:
+    """Each user's resumes live in their own subfolder - never a shared pool
+    (see the multi-user security audit: this used to be one shared directory,
+    which leaked every user's resume to every other user)."""
+    return RESUMES_DIR / str(user_id)
+
+
+def latest_resume(user_id: int) -> Optional[Path]:
+    pdfs = list(_user_resume_dir(user_id).glob("*.pdf"))
     if not pdfs:
         return None
     return max(pdfs, key=lambda p: p.stat().st_mtime)
@@ -198,8 +210,27 @@ def scheduler_run_now(current_user: dict = Depends(auth.require_user)):
 
 @app.get("/api/resume")
 def get_resume(current_user: dict = Depends(auth.require_user)):
-    resume = latest_resume()
+    resume = latest_resume(current_user["id"])
     return {"resume_filename": resume.name if resume else None}
+
+
+@app.post("/api/resume")
+async def upload_resume(file: UploadFile = File(...), current_user: dict = Depends(auth.require_user)):
+    """Uploads a resume PDF into this user's own resume folder. Does not
+    touch any other user's files, and does not delete previous uploads of
+    this same user (latest_resume() picks the most-recently-modified one)."""
+    original_name = Path(file.filename or "").name  # strip any directory components
+    if not original_name.lower().endswith(".pdf"):
+        raise HTTPException(400, "only .pdf files are accepted")
+
+    user_dir = _user_resume_dir(current_user["id"])
+    user_dir.mkdir(parents=True, exist_ok=True)
+    dest = user_dir / original_name
+
+    contents = await file.read()
+    dest.write_bytes(contents)
+
+    return {"resume_filename": dest.name}
 
 
 @app.get("/api/queue")
@@ -317,7 +348,7 @@ def api_send(row_id: int, current_user: dict = Depends(auth.require_user)):
     template_used = row.get("template_used") or TEMPLATE_REPLY_TO_NAUKRI
 
     credentials = auth.get_credential_for_user(current_user["id"])
-    resume = latest_resume()
+    resume = latest_resume(current_user["id"])
     if row.get("final_body"):
         rendered = {"subject": row.get("final_subject") or "", "body": row["final_body"]}
     else:
@@ -345,7 +376,7 @@ def api_send(row_id: int, current_user: dict = Depends(auth.require_user)):
             )
     except Exception as e:
         db.update_queue_row(current_user["id"], row_id, {"status": STATUS_FAILED, "error_message": str(e)})
-        excel_tracker.upsert_tracker_row(db.get_queue_row(current_user["id"], row_id))
+        excel_tracker.upsert_tracker_row(current_user["id"], db.get_queue_row(current_user["id"], row_id))
         raise HTTPException(500, f"send failed: {e}")
 
     transition_fields = lifecycle.apply_transition(row, "send")
@@ -362,7 +393,7 @@ def api_send(row_id: int, current_user: dict = Depends(auth.require_user)):
     # kept distinct from the still-editable final_subject/final_body draft.
     db.insert_sent_record(current_user["id"], row_id, rendered["subject"], rendered["body"])
     updated_row = db.get_queue_row(current_user["id"], row_id)
-    excel_tracker.upsert_tracker_row(updated_row)
+    excel_tracker.upsert_tracker_row(current_user["id"], updated_row)
     return {"result": result, "row": updated_row}
 
 
@@ -392,7 +423,7 @@ def api_advance(row_id: int, body: AdvanceBody, current_user: dict = Depends(aut
         raise HTTPException(400, str(e))
     db.update_queue_row(current_user["id"], row_id, fields)
     updated_row = db.get_queue_row(current_user["id"], row_id)
-    excel_tracker.upsert_tracker_row(updated_row)
+    excel_tracker.upsert_tracker_row(current_user["id"], updated_row)
     return updated_row
 
 
@@ -407,7 +438,7 @@ def api_skip(row_id: int, current_user: dict = Depends(auth.require_user)):
         raise HTTPException(400, str(e))
     db.update_queue_row(current_user["id"], row_id, fields)
     updated_row = db.get_queue_row(current_user["id"], row_id)
-    excel_tracker.upsert_tracker_row(updated_row)
+    excel_tracker.upsert_tracker_row(current_user["id"], updated_row)
     return updated_row
 
 

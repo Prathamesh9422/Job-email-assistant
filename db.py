@@ -111,6 +111,7 @@ def _postgres_schema() -> list[str]:
             refresh_token_encrypted  TEXT NOT NULL,
             is_active                BOOLEAN NOT NULL DEFAULT TRUE,
             api_token_hash           TEXT UNIQUE,
+            api_token_created_at     TEXT,
             created_at               TEXT NOT NULL,
             updated_at               TEXT NOT NULL
         )
@@ -201,6 +202,7 @@ def _postgres_schema() -> list[str]:
         # ARC-0004 (extension auth): a per-user long-lived token, stored only
         # as a hash, that the Chrome extension sends as Authorization: Bearer.
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS api_token_hash TEXT UNIQUE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS api_token_created_at TEXT",
         # ARC-0004: browser-plugin-scraped rows have no gmail_message_id and
         # dedup on (company, role, applied_date) instead - see dedup_key below.
         "ALTER TABLE queue ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'gmail'",
@@ -229,6 +231,7 @@ def _sqlite_schema() -> list[str]:
             refresh_token_encrypted  TEXT NOT NULL,
             is_active                INTEGER NOT NULL DEFAULT 1,
             api_token_hash           TEXT UNIQUE,
+            api_token_created_at     TEXT,
             created_at               TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at               TEXT NOT NULL DEFAULT (datetime('now'))
         )
@@ -323,6 +326,8 @@ def init_db() -> None:
         }
         if "api_token_hash" not in existing_user_cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN api_token_hash TEXT"))
+        if "api_token_created_at" not in existing_user_cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN api_token_created_at TEXT"))
 
         existing_cols = {
             row[1] for row in conn.execute(text("PRAGMA table_info(queue)"))
@@ -510,10 +515,14 @@ def deactivate_user(user_id: int) -> None:
 def set_api_token_hash(user_id: int, token_hash: str) -> None:
     """Stores only the hash (ARC-0004 extension-auth decision) - the
     plaintext token is shown to the user once, at generation time, and
-    never persisted. Overwrites/invalidates any previous token."""
+    never persisted. Overwrites/invalidates any previous token. Records the
+    creation time so it can be aged out (see auth.API_TOKEN_TTL_DAYS)."""
     with get_conn() as conn:
         conn.execute(
-            text("UPDATE users SET api_token_hash = :hash, updated_at = :ts WHERE id = :id"),
+            text(
+                "UPDATE users SET api_token_hash = :hash, api_token_created_at = :ts, "
+                "updated_at = :ts WHERE id = :id"
+            ),
             {"hash": token_hash, "ts": _now(), "id": user_id},
         )
 
@@ -549,7 +558,15 @@ def get_user_by_api_token_hash(token_hash: str) -> Optional[dict]:
 
 def insert_queue_row(conn, user_id: int, row: dict) -> Optional[int]:
     """Insert a parsed Naukri email into the queue for one user. Returns new
-    row id, or None if it already existed."""
+    row id, or None if it already existed.
+
+    SECURITY: user_id is trusted as-is with no cross-check against a session
+    here - callers must source it only from an authenticated context
+    (auth.require_user()/require_user_or_token()'s resolved user, or the
+    Ingestion Path's own per-user loop), never from client-supplied JSON/
+    query params. Every current call site does this correctly; a future
+    route that naively takes user_id from request input instead of the auth
+    dependency would be an instant IDOR."""
     ts = _now()
     params = {
         "user_id": user_id,
@@ -601,7 +618,11 @@ def insert_scraped_row(conn, user_id: int, row: dict) -> Optional[int]:
     """Insert one browser-plugin-scraped applied-job into the queue for one
     user (ARC-0004). Returns the new row id, or None if a row with the same
     (user_id, company, role, applied_date) dedup key already exists - an
-    existing row's fields are never overwritten by a later scrape."""
+    existing row's fields are never overwritten by a later scrape.
+
+    SECURITY: same rule as insert_queue_row() above - user_id must only come
+    from an authenticated context (browser_ingest.py's caller resolves it via
+    auth.require_user_or_token()), never from the scraped job payload itself."""
     ts = _now()
     dedup_key = scraped_row_dedup_key(user_id, row["company"], row["role"], row["applied_date"])
     params = {

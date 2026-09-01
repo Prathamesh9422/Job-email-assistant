@@ -29,6 +29,7 @@ built on top of it.
 """
 import hashlib
 import secrets
+from datetime import datetime, timedelta, timezone
 
 import requests
 from fastapi import HTTPException, Request
@@ -43,6 +44,12 @@ from config import OAUTH_REDIRECT_PATH, SCOPES, WEB_OAUTH_CLIENT_ID, WEB_OAUTH_C
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
 USERINFO_URI = "https://openidconnect.googleapis.com/v1/userinfo"
+
+# Chrome extension API tokens (ARC-0004) are long-lived by design (the
+# extension has no way to interactively refresh one), but "long-lived" should
+# still mean "expires eventually", not "forever". Regenerating (Settings ->
+# Generate extension token) always issues a fresh TTL.
+API_TOKEN_TTL_DAYS = 90
 
 
 def _client_config(redirect_uri: str) -> dict:
@@ -155,10 +162,22 @@ def require_user_or_token(request: Request) -> dict:
         token = auth_header[len("Bearer "):].strip()
         if token:
             user = db.get_user_by_api_token_hash(_hash_api_token(token))
-            if user and user["is_active"]:
+            if user and user["is_active"] and not _api_token_expired(user):
                 return user
 
     raise HTTPException(401, "not signed in")
+
+
+def _api_token_expired(user: dict) -> bool:
+    created_at = user.get("api_token_created_at")
+    if not created_at:
+        # Token predates this column (or was never issued the normal way) -
+        # treat as expired so it's forced through a fresh generate_api_token().
+        return True
+    created = datetime.fromisoformat(created_at)
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - created > timedelta(days=API_TOKEN_TTL_DAYS)
 
 
 def get_credential_for_user(user_id: int) -> Credentials:

@@ -1,9 +1,18 @@
-"""Write-through mirror of the queue into a durable tracker.xlsx."""
+"""Write-through mirror of each user's own queue into their own tracker.xlsx.
+
+One file per user under TRACKER_DIR - never a single shared file. This used
+to be one shared tracker.xlsx for every user (a real cross-user data leak:
+every user's subject/company/role/hr_email/status ended up in the same
+workbook, keyed only by gmail_message_id, with no user_id column at all).
+Not reachable through any HTTP route today (verified: no route reads,
+downloads, or serves this file), but the commingling itself was real and
+inconsistent with every other per-user-scoped table/resource in this app -
+fixed for defense-in-depth and consistency, not because it was live-exploitable."""
 from datetime import datetime, timezone
 
 from openpyxl import Workbook, load_workbook
 
-from config import TRACKER_FILE
+from config import TRACKER_DIR
 
 HEADERS = [
     "date_processed",
@@ -18,19 +27,25 @@ HEADERS = [
 ]
 
 
-def _load_or_create():
-    if TRACKER_FILE.exists():
-        wb = load_workbook(TRACKER_FILE)
+def _tracker_file(user_id: int):
+    return TRACKER_DIR / f"{user_id}.xlsx"
+
+
+def _load_or_create(user_id: int):
+    tracker_file = _tracker_file(user_id)
+    if tracker_file.exists():
+        wb = load_workbook(tracker_file)
         ws = wb.active
     else:
+        tracker_file.parent.mkdir(parents=True, exist_ok=True)
         wb = Workbook()
         ws = wb.active
         ws.append(HEADERS)
     return wb, ws
 
 
-def upsert_tracker_row(queue_row: dict) -> None:
-    wb, ws = _load_or_create()
+def upsert_tracker_row(user_id: int, queue_row: dict) -> None:
+    wb, ws = _load_or_create(user_id)
 
     message_id_col = HEADERS.index("gmail_message_id") + 1
     target_row = None
@@ -57,4 +72,4 @@ def upsert_tracker_row(queue_row: dict) -> None:
         for col, value in enumerate(values, start=1):
             ws.cell(row=target_row, column=col, value=value)
 
-    wb.save(TRACKER_FILE)
+    wb.save(_tracker_file(user_id))
