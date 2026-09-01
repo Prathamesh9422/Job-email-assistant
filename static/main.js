@@ -485,6 +485,11 @@ generateTokenBtn.addEventListener("click", async () => {
     confirm("Regenerating replaces your current token - the old one stops working immediately. Continue?")
   ) {
     const res = await fetch("/api/settings/api-token", { method: "POST" });
+    if (!res.ok) {
+      alert(`Couldn't generate a token (HTTP ${res.status}). Is the server running the latest code? Check the console for details.`);
+      console.error("POST /api/settings/api-token failed:", res.status, await res.text());
+      return;
+    }
     const data = await res.json();
     tokenValueInput.value = data.token;
     tokenDisplay.classList.remove("hidden");
